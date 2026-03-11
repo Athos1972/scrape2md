@@ -20,6 +20,10 @@ class CrawlConfig:
     save_html: bool = True
     save_markdown: bool = True
     user_agent: str = "scrape2md/0.1.0"
+    render_js: bool = True
+    wait_for_selector: str | None = None
+    wait_time_ms: int = 1500
+    wait_until: str | None = None
 
     def to_dict(self) -> dict:
         return asdict(self)
@@ -39,6 +43,7 @@ class PageRecord:
     internal_links: list[str]
     asset_links: list[str]
     content_hash: str | None
+    fetch_mode: str
     success: bool
 
 
