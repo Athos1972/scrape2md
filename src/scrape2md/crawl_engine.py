@@ -20,14 +20,29 @@ class CrawlResult:
     content_type: str | None
     internal_links: list[str]
     asset_links: list[str]
+    fetch_mode: str
 
 
 class CrawlEngine:
     """Thin wrapper around crawl4ai with httpx fallback."""
 
-    def __init__(self, timeout: float, user_agent: str) -> None:
+    def __init__(
+        self,
+        timeout: float,
+        user_agent: str,
+        attachment_extensions: list[str],
+        render_js: bool,
+        wait_for_selector: str | None,
+        wait_time_ms: int,
+        wait_until: str | None,
+    ) -> None:
         self._timeout = timeout
         self._headers = {"User-Agent": user_agent}
+        self._attachment_extensions = tuple(ext.lower() if ext.startswith(".") else f".{ext.lower()}" for ext in attachment_extensions)
+        self._render_js = render_js
+        self._wait_for_selector = wait_for_selector
+        self._wait_time_ms = wait_time_ms
+        self._wait_until = wait_until
 
     def fetch_page(self, url: str) -> CrawlResult:
         try:
@@ -40,12 +55,25 @@ class CrawlEngine:
 
         async def _run() -> Any:
             async with AsyncWebCrawler() as crawler:
-                return await crawler.arun(url=url)
+                crawl_args: dict[str, Any] = {"url": url}
+                if self._render_js:
+                    crawl_args["js"] = True
+                if self._wait_for_selector:
+                    crawl_args["wait_for"] = self._wait_for_selector
+                if self._wait_time_ms > 0:
+                    crawl_args["delay_before_return_html"] = self._wait_time_ms / 1000
+                if self._wait_until:
+                    crawl_args["wait_until"] = self._wait_until
+
+                try:
+                    return await crawler.arun(**crawl_args)
+                except TypeError:
+                    return await crawler.arun(url=url)
 
         result = asyncio.run(_run())
         html = getattr(result, "html", "") or ""
         markdown = getattr(result, "markdown", "") or md(html)
-        title, links, assets = _extract_links(url, html)
+        title, links, assets = _extract_links(url, html, self._attachment_extensions)
         status = getattr(result, "status_code", None)
         ctype = getattr(result, "response_headers", {}).get("content-type") if getattr(result, "response_headers", None) else None
         return CrawlResult(
@@ -57,6 +85,7 @@ class CrawlEngine:
             content_type=ctype,
             internal_links=links,
             asset_links=assets,
+            fetch_mode="crawl4ai",
         )
 
     def _fetch_with_httpx(self, url: str) -> CrawlResult:
@@ -64,7 +93,7 @@ class CrawlEngine:
             response = client.get(url)
             response.raise_for_status()
         html = response.text
-        title, links, assets = _extract_links(url, html)
+        title, links, assets = _extract_links(url, html, self._attachment_extensions)
         return CrawlResult(
             url=str(response.url),
             html=html,
@@ -74,21 +103,32 @@ class CrawlEngine:
             content_type=response.headers.get("content-type"),
             internal_links=links,
             asset_links=assets,
+            fetch_mode="httpx",
         )
 
 
-def _extract_links(base_url: str, html: str) -> tuple[str | None, list[str], list[str]]:
+def _extract_links(base_url: str, html: str, attachment_extensions: tuple[str, ...]) -> tuple[str | None, list[str], list[str]]:
     soup = BeautifulSoup(html, "html.parser")
     title = soup.title.text.strip() if soup.title and soup.title.text else None
     links: list[str] = []
     assets: list[str] = []
-    for node in soup.select("a[href],img[src],script[src],link[href]"):
+
+    for node in soup.select("a[href]"):
+        href = node.get("href")
+        if not href or href.startswith(("mailto:", "javascript:", "#")):
+            continue
+        absolute = urljoin(base_url, href)
+        if absolute.lower().endswith(attachment_extensions):
+            assets.append(absolute)
+        else:
+            links.append(absolute)
+
+    for node in soup.select("img[src],source[src],video[src],audio[src],link[href]"):
         href = node.get("href") or node.get("src")
         if not href or href.startswith(("mailto:", "javascript:", "#")):
             continue
         absolute = urljoin(base_url, href)
-        if any(absolute.lower().endswith(ext) for ext in (".pdf", ".zip", ".png", ".jpg", ".jpeg", ".doc", ".docx", ".xlsx")):
+        if absolute.lower().endswith(attachment_extensions):
             assets.append(absolute)
-        else:
-            links.append(absolute)
+
     return title, sorted(set(links)), sorted(set(assets))
