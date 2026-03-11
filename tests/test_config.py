@@ -11,6 +11,8 @@ def test_load_config_ignores_unknown_keys(tmp_path: Path) -> None:
                 'start_url = "https://docs.example.com"',
                 'output_root = "exports"',
                 'render_js = true',
+                'dynamic_mode = true',
+                'wait_for = "js:document.querySelectorAll(\'a[href]\').length > 5"',
                 'future_option = "ignored"',
             ]
         ),
@@ -22,3 +24,5 @@ def test_load_config_ignores_unknown_keys(tmp_path: Path) -> None:
     assert cfg.start_url == "https://docs.example.com"
     assert cfg.output_root == "exports"
     assert cfg.render_js is True
+    assert cfg.dynamic_mode is True
+    assert "querySelectorAll" in cfg.wait_for

@@ -1,18 +1,14 @@
 from __future__ import annotations
 
 import logging
-import re
 import time
 from collections import deque
 from pathlib import Path
-from urllib.parse import urljoin
-
-import httpx
-from bs4 import BeautifulSoup
 
 from scrape2md import __version__
 from scrape2md.attachments import AttachmentDownloader
 from scrape2md.crawl_engine import CrawlEngine
+from scrape2md.discovery import discover_urls_from_sitemaps
 from scrape2md.manifest import write_manifest
 from scrape2md.models import CrawlConfig, ErrorRecord, Manifest, PageRecord
 from scrape2md.url_mapper import normalize_url, url_to_rel_path
@@ -32,6 +28,18 @@ class SiteExporter:
             wait_for_selector=config.wait_for_selector,
             wait_time_ms=config.wait_time_ms,
             wait_until=config.wait_until,
+            dynamic_mode=config.dynamic_mode,
+            scan_full_page=config.scan_full_page,
+            scroll_delay=config.scroll_delay,
+            delay_before_return_html=config.delay_before_return_html,
+            remove_consent_popups=config.remove_consent_popups,
+            remove_overlay_elements=config.remove_overlay_elements,
+            process_iframes=config.process_iframes,
+            flatten_shadow_dom=config.flatten_shadow_dom,
+            enable_menu_clicks=config.enable_menu_clicks,
+            wait_for=config.wait_for,
+            js_code_before_wait=config.js_code_before_wait,
+            js_code=config.js_code,
         )
         self.downloader = AttachmentDownloader(config)
 
@@ -41,8 +49,11 @@ class SiteExporter:
         html_dir = export_root / "html"
         pages_dir = export_root / "pages"
         assets_dir = export_root / "assets"
+        debug_dir = export_root / "debug"
         for path in (html_dir, pages_dir, assets_dir):
             path.mkdir(parents=True, exist_ok=True)
+        if self.config.debug_mode:
+            debug_dir.mkdir(parents=True, exist_ok=True)
 
         manifest = Manifest.started(
             source_url=self.config.start_url,
@@ -55,13 +66,14 @@ class SiteExporter:
         visited: set[str] = set()
 
         logger.info(
-            "Starting crawl start_url=%s allowed_domains=%s include_patterns=%s exclude_patterns=%s max_depth=%s max_pages=%s",
+            "Starting crawl start_url=%s allowed_domains=%s include_patterns=%s exclude_patterns=%s max_depth=%s max_pages=%s dynamic_mode=%s",
             self.config.start_url,
             self.config.allowed_domains,
             self.config.include_patterns,
             self.config.exclude_patterns,
             self.config.max_depth,
             self.config.max_pages,
+            self.config.dynamic_mode,
         )
 
         while queue and len(manifest.pages) < self.config.max_pages:
@@ -83,7 +95,12 @@ class SiteExporter:
                 continue
 
             try:
-                result = self.engine.fetch_page(url)
+                result = self.engine.fetch_page(
+                    url,
+                    allowed_domains=self.config.allowed_domains or [domain],
+                    include_patterns=self.config.include_patterns,
+                    exclude_patterns=self.config.exclude_patterns,
+                )
                 normalized_url = normalize_url(result.url)
                 html_rel = url_to_rel_path(normalized_url, ".html")
                 md_rel = url_to_rel_path(normalized_url, ".md")
@@ -96,6 +113,10 @@ class SiteExporter:
                     html_path.write_text(result.html, encoding="utf-8")
                 if self.config.save_markdown:
                     md_path.write_text(result.markdown, encoding="utf-8")
+
+                screenshot_path: str | None = None
+                if self.config.debug_save_screenshot:
+                    logger.debug("debug_save_screenshot enabled, but screenshot capture is not supported in this runtime.")
 
                 manifest.pages.append(
                     PageRecord(
@@ -112,6 +133,12 @@ class SiteExporter:
                         asset_links=result.asset_links,
                         content_hash=sha256_text(result.html),
                         fetch_mode=result.fetch_mode,
+                        links_from_result=result.discovery_stats.crawl4ai_link_count,
+                        links_from_html_fallback=result.discovery_stats.html_href_count,
+                        filtered_links_count=result.discovery_stats.filtered_internal_count,
+                        filtered_assets_count=result.discovery_stats.filtered_asset_count,
+                        html_length=len(result.html),
+                        screenshot_path=screenshot_path,
                         success=True,
                     )
                 )
@@ -122,10 +149,27 @@ class SiteExporter:
                         queue.append((n_link, depth + 1, normalized_url))
 
                 if depth == 0 and not result.internal_links:
-                    for sitemap_link in self._discover_from_sitemap(normalized_url):
+                    pages, sitemap_assets = discover_urls_from_sitemaps(
+                        page_url=normalized_url,
+                        request_timeout=self.config.request_timeout,
+                        user_agent=self.config.user_agent,
+                        allowed_domains=self.config.allowed_domains or [domain],
+                        include_patterns=self.config.include_patterns,
+                        exclude_patterns=self.config.exclude_patterns,
+                        attachment_extensions=tuple(self.config.attachment_extensions),
+                    )
+                    for sitemap_link in pages:
                         n_link = normalize_url(sitemap_link)
                         if n_link not in visited:
                             queue.append((n_link, depth + 1, normalized_url))
+
+                    if self.config.download_attachments:
+                        for asset_url in sitemap_assets:
+                            asset, error = self.downloader.download(asset_url, assets_dir, normalized_url)
+                            if asset:
+                                manifest.assets.append(asset)
+                            if error:
+                                manifest.errors.append(error)
 
                 if self.config.download_attachments:
                     for asset_url in result.asset_links:
@@ -139,12 +183,26 @@ class SiteExporter:
                     time.sleep(self.config.rate_limit_seconds)
 
                 logger.info(
-                    "Crawled page %s mode=%s discovered_links=%s discovered_assets=%s",
+                    "Crawled page %s mode=%s title=%s html_len=%s result.links internal count=%s html fallback href count=%s after filtering count=%s assets=%s html_path=%s",
                     normalized_url,
                     result.fetch_mode,
-                    len(result.internal_links),
-                    len(result.asset_links),
+                    result.title,
+                    len(result.html),
+                    result.discovery_stats.crawl4ai_link_count,
+                    result.discovery_stats.html_href_count,
+                    result.discovery_stats.filtered_internal_count,
+                    result.discovery_stats.filtered_asset_count,
+                    str(html_path) if self.config.save_html else "-",
                 )
+
+                if not result.internal_links:
+                    logger.warning(
+                        "0 links after discovery for %s: result.links internal count=%s html fallback href count=%s after filtering count=%s",
+                        normalized_url,
+                        result.discovery_stats.crawl4ai_link_count,
+                        result.discovery_stats.html_href_count,
+                        result.discovery_stats.filtered_internal_count,
+                    )
             except Exception as exc:
                 logger.error("Failed page %s: %s", url, exc)
                 manifest.errors.append(
@@ -159,74 +217,3 @@ class SiteExporter:
         manifest.finish()
         write_manifest(manifest, export_root / "manifest.json")
         return manifest, export_root
-
-    def _discover_from_sitemap(self, page_url: str) -> list[str]:
-        allowed_domains = self.config.allowed_domains or [normalize_url(self.config.start_url).split("/")[2]]
-        candidates = [urljoin(page_url, "/sitemap.xml")]
-
-        try:
-            with httpx.Client(
-                timeout=self.config.request_timeout,
-                follow_redirects=True,
-                headers={"User-Agent": self.config.user_agent},
-            ) as client:
-                robots_url = urljoin(page_url, "/robots.txt")
-                try:
-                    robots_response = client.get(robots_url)
-                    if robots_response.status_code < 400:
-                        for line in robots_response.text.splitlines():
-                            if line.lower().startswith("sitemap:"):
-                                sitemap_url = line.split(":", 1)[1].strip()
-                                if sitemap_url:
-                                    candidates.append(sitemap_url)
-                except Exception as exc:
-                    logger.debug("robots.txt discovery failed at %s: %s", robots_url, exc)
-
-                seen_sitemaps: set[str] = set()
-                queue: deque[str] = deque(candidates)
-                discovered_pages: set[str] = set()
-
-                while queue:
-                    sitemap_url = normalize_url(queue.popleft())
-                    if sitemap_url in seen_sitemaps:
-                        continue
-                    seen_sitemaps.add(sitemap_url)
-
-                    try:
-                        response = client.get(sitemap_url)
-                        response.raise_for_status()
-                    except Exception as exc:
-                        logger.debug("Sitemap request failed at %s: %s", sitemap_url, exc)
-                        continue
-
-                    locs = _extract_sitemap_locs(response.text)
-                    if not locs:
-                        logger.debug("No <loc> entries found in sitemap %s", sitemap_url)
-                        continue
-
-                    for loc in locs:
-                        normalized = normalize_url(loc)
-                        if not is_same_domain(normalized, allowed_domains):
-                            continue
-                        if normalized.endswith(".xml") or normalized.endswith(".xml.gz"):
-                            if normalized not in seen_sitemaps:
-                                queue.append(normalized)
-                        else:
-                            discovered_pages.add(normalized)
-
-                if discovered_pages:
-                    logger.info("No links on root page; discovered %s urls via sitemap", len(discovered_pages))
-                else:
-                    logger.info("No links on root page and no crawlable URLs found in sitemap/robots discovery")
-                return sorted(discovered_pages)
-        except Exception as exc:
-            logger.debug("Sitemap discovery failed: %s", exc)
-            return []
-
-
-def _extract_sitemap_locs(xml_text: str) -> list[str]:
-    soup = BeautifulSoup(xml_text, "xml")
-    locs = [loc.text.strip() for loc in soup.find_all("loc") if loc.text and loc.text.strip()]
-    if locs:
-        return locs
-    return [match.strip() for match in re.findall(r"<loc>\s*(.*?)\s*</loc>", xml_text, flags=re.IGNORECASE | re.DOTALL)]
