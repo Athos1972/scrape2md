@@ -23,7 +23,7 @@ def write_markdown(output_path: Path, title: str, content: str) -> None:
 
 def main() -> int:
     parser = argparse.ArgumentParser(description="Generate markdown output based on config")
-    parser.add_argument("--config", default="example.toml", help="Path to TOML config file")
+    parser.add_argument("--config", required=True, help="Path to TOML config file")
     parser.add_argument("--title", default="Scrape2MD Output", help="Document title")
     parser.add_argument("--content", default="Generated content.", help="Document body")
     args = parser.parse_args()

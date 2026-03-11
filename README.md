@@ -24,4 +24,6 @@ output_path = "output/result.md"
 python3 scrape2md.py --config config.toml --title "Mein Titel" --content "Mein Inhalt"
 ```
 
+Die Option `--config` ist verpflichtend. Ohne Angabe bricht das CLI mit einer klaren Fehlermeldung ab.
+
 Die Datei wird an den in `output_path` definierten Ort geschrieben.
