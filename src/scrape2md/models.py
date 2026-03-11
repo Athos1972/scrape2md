@@ -21,6 +21,23 @@ class CrawlConfig:
     save_markdown: bool = True
     user_agent: str = "scrape2md/0.1.0"
     render_js: bool = True
+    dynamic_mode: bool = True
+    scan_full_page: bool = True
+    scroll_delay: float = 0.5
+    delay_before_return_html: float = 1.0
+    remove_consent_popups: bool = True
+    remove_overlay_elements: bool = True
+    process_iframes: bool = True
+    flatten_shadow_dom: bool = True
+    enable_menu_clicks: bool = True
+    wait_for: str = "js:document.querySelectorAll('a[href]').length > 0 || document.readyState === 'complete'"
+    js_code_before_wait: str | None = None
+    js_code: str | None = None
+    debug_mode: bool = False
+    debug_save_screenshot: bool = False
+    headless: bool = True
+    java_script_enabled: bool = True
+    crawl4ai_verbose: bool = False
     wait_for_selector: str | None = None
     wait_time_ms: int = 1500
     wait_until: str | None = None
@@ -44,7 +61,13 @@ class PageRecord:
     asset_links: list[str]
     content_hash: str | None
     fetch_mode: str
-    success: bool
+    links_from_result: int = 0
+    links_from_html_fallback: int = 0
+    filtered_links_count: int = 0
+    filtered_assets_count: int = 0
+    html_length: int = 0
+    screenshot_path: str | None = None
+    success: bool = True
 
 
 @dataclass(slots=True)

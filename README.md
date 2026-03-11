@@ -44,7 +44,10 @@ Wichtige Felder in `config.toml`:
 - `request_timeout`, `rate_limit_seconds`
 - `save_html`, `save_markdown`
 - `user_agent`
-- `render_js`, `wait_for_selector`, `wait_time_ms`, `wait_until`
+- Basis: `render_js`, `wait_for_selector`, `wait_time_ms`, `wait_until`
+- Dynamisch/modern: `dynamic_mode`, `scan_full_page`, `scroll_delay`, `delay_before_return_html`, `remove_consent_popups`, `remove_overlay_elements`, `process_iframes`, `flatten_shadow_dom`, `enable_menu_clicks`, `wait_for`, `js_code_before_wait`, `js_code`
+- Crawl4AI BrowserConfig: `headless`, `java_script_enabled`, `crawl4ai_verbose`
+- Debug: `debug_mode`, `debug_save_screenshot`
 
 > Hinweis: Für das eigentliche Crawl-CLI gibt es **kein** `output_path`-Feld. Dieses Feld gehört nur zum separaten Demo-Skript `scrape2md.py`.
 
@@ -62,33 +65,44 @@ Alternativ mit dem Python-Entrypoint:
 python scripts/crawl_site.py --config config.toml
 ```
 
-### URL direkt als Argument übergeben
+## Dynamische Websites / Discovery-Strategie
 
-```bash
-scrape2md "https://docs.example.com/getting-started"
-```
+Die Link-Discovery läuft mehrstufig:
 
-Oder Config laden und nur `start_url` überschreiben:
+1. Interne Links aus `CrawlResult.links` (crawl4ai payload)
+2. Fallback: zusätzliche Extraktion von `a[href]` im finalen HTML
+3. URL-Normalisierung + Domain-/Pattern-Filter + Duplikatentfernung
+4. Trennung in Seitenlinks vs. Attachments
 
-```bash
-scrape2md "https://docs.example.com/getting-started" --config config.toml
-```
+Wichtig: Für Discovery und HTML-Export wird immer `result.html` (rohes finales DOM) verwendet. `result.cleaned_html` ist optional nur für Debug-Zwecke.
 
-Am Ende der Ausführung wird eine Zusammenfassung ausgegeben:
+Bei 0 Links auf der Root-Seite wird zusätzlich `robots.txt` + `sitemap.xml` (inkl. `sitemapindex`) ausgewertet.
 
-- Anzahl Seiten
-- Anzahl Assets
-- Anzahl Fehler
-- Zielordner
+## Troubleshooting
 
-## Troubleshooting: Es wird nur die Root-Seite gecrawlt
+### Root-Seite lädt, aber keine Links gefunden
 
-Prüfe in dieser Reihenfolge:
+- Prüfen, ob Crawl4AI korrekt mit `BrowserConfig` + `CrawlerRunConfig` läuft (`arun(url=..., config=...)`). Direkte `arun(**kwargs)`-Aufrufe sind API-abhängig und werden vermieden.
+- `dynamic_mode = true` aktivieren
+- `wait_for` auf eine realistische Link-Anzahl setzen
+- `enable_menu_clicks = true` lassen (öffnet generisch Menüs / aria-expanded / details)
+- Logs prüfen: `result.links internal count`, `html fallback href count`, `after filtering count`, `raw_html_len`, `cleaned_html_len`
+- Mit `debug_mode = true` werden Debug-Artefakte (`raw_html`, optional `cleaned_html`) unter `exports/<domain>/debug/` gespeichert.
 
-1. **Filter**: `allowed_domains`, `include_patterns`, `exclude_patterns` passen zur Zielseite.
-2. **Tiefe/Limits**: `max_depth` und `max_pages` sind nicht zu klein.
-3. **JS-Rendering**: Bei dynamischen Seiten `render_js = true` aktivieren und mit `wait_for_selector` + `wait_time_ms` warten.
-4. **Logs**: Das Tool loggt Skip-Gründe (`visited`, `max_depth`, `domain_filter`, `pattern_filter`) und pro Seite Anzahl gefundener Links/Assets.
+### Cookie-Banner blockiert DOM
+
+- `remove_consent_popups = true`
+- `remove_overlay_elements = true`
+
+### Navigation liegt in Shadow DOM oder iFrame
+
+- `process_iframes = true`
+- `flatten_shadow_dom = true`
+
+### Sitemap enthält keine brauchbaren HTML-URLs
+
+- Ist nur Fallback/Zusatzquelle.
+- Discovery erfolgt primär auf gerendertem DOM + crawl4ai links payload.
 
 ## Exportstruktur
 
