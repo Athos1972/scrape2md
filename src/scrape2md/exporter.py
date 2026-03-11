@@ -40,6 +40,9 @@ class SiteExporter:
             wait_for=config.wait_for,
             js_code_before_wait=config.js_code_before_wait,
             js_code=config.js_code,
+            headless=config.headless,
+            java_script_enabled=config.java_script_enabled,
+            crawl4ai_verbose=config.crawl4ai_verbose,
         )
         self.downloader = AttachmentDownloader(config)
 
@@ -115,6 +118,13 @@ class SiteExporter:
                     md_path.write_text(result.markdown, encoding="utf-8")
 
                 screenshot_path: str | None = None
+                if self.config.debug_mode:
+                    raw_debug_path = debug_dir / f"{md_rel.as_posix().replace('/', '__')}.raw.html"
+                    raw_debug_path.parent.mkdir(parents=True, exist_ok=True)
+                    raw_debug_path.write_text(result.html, encoding="utf-8")
+                    if result.cleaned_html:
+                        cleaned_debug_path = debug_dir / f"{md_rel.as_posix().replace('/', '__')}.cleaned.html"
+                        cleaned_debug_path.write_text(result.cleaned_html, encoding="utf-8")
                 if self.config.debug_save_screenshot:
                     logger.debug("debug_save_screenshot enabled, but screenshot capture is not supported in this runtime.")
 
@@ -183,11 +193,12 @@ class SiteExporter:
                     time.sleep(self.config.rate_limit_seconds)
 
                 logger.info(
-                    "Crawled page %s mode=%s title=%s html_len=%s result.links internal count=%s html fallback href count=%s after filtering count=%s assets=%s html_path=%s",
+                    "Crawled page %s mode=%s title=%s raw_html_len=%s cleaned_html_len=%s result.links internal count=%s html fallback href count=%s after filtering count=%s assets=%s html_path=%s",
                     normalized_url,
                     result.fetch_mode,
                     result.title,
                     len(result.html),
+                    len(result.cleaned_html or ""),
                     result.discovery_stats.crawl4ai_link_count,
                     result.discovery_stats.html_href_count,
                     result.discovery_stats.filtered_internal_count,
@@ -202,6 +213,14 @@ class SiteExporter:
                         result.discovery_stats.crawl4ai_link_count,
                         result.discovery_stats.html_href_count,
                         result.discovery_stats.filtered_internal_count,
+                    )
+
+                if len(result.html.strip()) < 256:
+                    logger.warning(
+                        "Very small raw HTML for %s (raw_html_len=%s, cleaned_html_len=%s) - page may not be fully rendered",
+                        normalized_url,
+                        len(result.html),
+                        len(result.cleaned_html or ""),
                     )
             except Exception as exc:
                 logger.error("Failed page %s: %s", url, exc)

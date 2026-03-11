@@ -30,9 +30,13 @@ remove_overlay_elements = true
 process_iframes = true
 flatten_shadow_dom = true
 enable_menu_clicks = true
-wait_for = "js:document.querySelectorAll('a[href]').length > 10"
+wait_for = "js:document.querySelectorAll('a[href]').length > 0 || document.readyState === 'complete'"
 js_code_before_wait = ""
 js_code = ""
 
 debug_mode = false
 debug_save_screenshot = false
+
+headless = true
+java_script_enabled = true
+crawl4ai_verbose = false

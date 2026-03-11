@@ -30,11 +30,14 @@ class CrawlConfig:
     process_iframes: bool = True
     flatten_shadow_dom: bool = True
     enable_menu_clicks: bool = True
-    wait_for: str = "js:document.querySelectorAll('a[href]').length > 10"
+    wait_for: str = "js:document.querySelectorAll('a[href]').length > 0 || document.readyState === 'complete'"
     js_code_before_wait: str | None = None
     js_code: str | None = None
     debug_mode: bool = False
     debug_save_screenshot: bool = False
+    headless: bool = True
+    java_script_enabled: bool = True
+    crawl4ai_verbose: bool = False
     wait_for_selector: str | None = None
     wait_time_ms: int = 1500
     wait_until: str | None = None

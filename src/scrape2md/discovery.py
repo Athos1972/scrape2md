@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import logging
 from collections import deque
+import gzip
 from html.parser import HTMLParser
 from typing import Any
 from urllib.parse import parse_qsl, urlencode, urljoin, urlparse, urlunparse
@@ -34,6 +35,9 @@ class _HTMLLinkParser(HTMLParser):
         attr_map = {k: v for k, v in attrs}
         if tag == "a" and attr_map.get("href"):
             self.hrefs.append(attr_map["href"] or "")
+        for attr in ("data-href", "data-url"):
+            if attr_map.get(attr):
+                self.hrefs.append(attr_map[attr] or "")
         if tag in {"img", "source", "video", "audio"} and attr_map.get("src"):
             self.assets.append(attr_map["src"] or "")
         if tag == "link" and attr_map.get("href"):
@@ -178,7 +182,14 @@ def discover_urls_from_sitemaps(*, page_url: str, request_timeout: float, user_a
                 logger.debug("Sitemap request failed at %s: %s", sitemap_url, exc)
                 continue
 
-            for loc in extract_sitemap_locs(response.text):
+            xml_text = response.text
+            if sitemap_url.endswith(".xml.gz"):
+                try:
+                    xml_text = gzip.decompress(response.content).decode("utf-8", errors="ignore")
+                except Exception as exc:
+                    logger.debug("Failed to gunzip sitemap %s: %s", sitemap_url, exc)
+
+            for loc in extract_sitemap_locs(xml_text):
                 normalized = normalize_discovered_url(loc, base_url=sitemap_url)
                 if not normalized or not is_same_domain(normalized, allowed_domains):
                     continue

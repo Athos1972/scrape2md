@@ -46,6 +46,7 @@ Wichtige Felder in `config.toml`:
 - `user_agent`
 - Basis: `render_js`, `wait_for_selector`, `wait_time_ms`, `wait_until`
 - Dynamisch/modern: `dynamic_mode`, `scan_full_page`, `scroll_delay`, `delay_before_return_html`, `remove_consent_popups`, `remove_overlay_elements`, `process_iframes`, `flatten_shadow_dom`, `enable_menu_clicks`, `wait_for`, `js_code_before_wait`, `js_code`
+- Crawl4AI BrowserConfig: `headless`, `java_script_enabled`, `crawl4ai_verbose`
 - Debug: `debug_mode`, `debug_save_screenshot`
 
 > Hinweis: Für das eigentliche Crawl-CLI gibt es **kein** `output_path`-Feld. Dieses Feld gehört nur zum separaten Demo-Skript `scrape2md.py`.
@@ -73,16 +74,20 @@ Die Link-Discovery läuft mehrstufig:
 3. URL-Normalisierung + Domain-/Pattern-Filter + Duplikatentfernung
 4. Trennung in Seitenlinks vs. Attachments
 
+Wichtig: Für Discovery und HTML-Export wird immer `result.html` (rohes finales DOM) verwendet. `result.cleaned_html` ist optional nur für Debug-Zwecke.
+
 Bei 0 Links auf der Root-Seite wird zusätzlich `robots.txt` + `sitemap.xml` (inkl. `sitemapindex`) ausgewertet.
 
 ## Troubleshooting
 
 ### Root-Seite lädt, aber keine Links gefunden
 
+- Prüfen, ob Crawl4AI korrekt mit `BrowserConfig` + `CrawlerRunConfig` läuft (`arun(url=..., config=...)`). Direkte `arun(**kwargs)`-Aufrufe sind API-abhängig und werden vermieden.
 - `dynamic_mode = true` aktivieren
 - `wait_for` auf eine realistische Link-Anzahl setzen
 - `enable_menu_clicks = true` lassen (öffnet generisch Menüs / aria-expanded / details)
-- Logs prüfen: `result.links internal count`, `html fallback href count`, `after filtering count`
+- Logs prüfen: `result.links internal count`, `html fallback href count`, `after filtering count`, `raw_html_len`, `cleaned_html_len`
+- Mit `debug_mode = true` werden Debug-Artefakte (`raw_html`, optional `cleaned_html`) unter `exports/<domain>/debug/` gespeichert.
 
 ### Cookie-Banner blockiert DOM
 
