@@ -1,0 +1,14 @@
+start_url = "https://docs.example.com/getting-started"
+output_root = "exports"
+allowed_domains = ["docs.example.com"]
+include_patterns = []
+exclude_patterns = ["/logout", "/auth"]
+max_pages = 100
+max_depth = 2
+download_attachments = true
+attachment_extensions = [".pdf", ".zip", ".docx", ".xlsx", ".png", ".jpg"]
+request_timeout = 20.0
+rate_limit_seconds = 0.2
+save_html = true
+save_markdown = true
+user_agent = "scrape2md/0.1.0"
