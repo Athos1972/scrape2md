@@ -1,5 +1,6 @@
 # scrape2md
 
+Kleines CLI-Beispiel, das Markdown erzeugt.
 `scrape2md` ist ein kleines Python-CLI-Tool, das **externe Websites** crawlt und in eine lokale, stabile Exportstruktur überführt.
 
 Ziel ist bewusst eine dünne Orchestrierungs-/Export-Schicht:
@@ -17,8 +18,12 @@ Ziel ist bewusst eine dünne Orchestrierungs-/Export-Schicht:
 - `manifest.json` mit Seiten/Assets/Fehlern schreiben
 - robustes Logging und Fehlerisolierung (eine defekte Seite stoppt nicht den ganzen Lauf)
 
+## Änderung
+Der Output-Pfad wird aus der TOML-Config gelesen (`output_path`) statt hart im Code zu stehen.
 ## Nicht-Scope
 
+## Konfiguration
+Kopiere die Beispielconfig und passe den Pfad an:
 - Login-Flows
 - Confluence/Jira/Teams/Mail-spezifische Logik
 - DB/Persistenzschicht
@@ -28,14 +33,23 @@ Ziel ist bewusst eine dünne Orchestrierungs-/Export-Schicht:
 ## Installation
 
 ```bash
+cp example.toml config.toml
 python -m venv .venv
 source .venv/bin/activate
 pip install -e .
 ```
 
+Beispiel (`config.toml`):
+
+```toml
+output_path = "output/result.md"
+```
+
+## Nutzung
 Optional für Entwicklung:
 
 ```bash
+python3 scrape2md.py --config config.toml --title "Mein Titel" --content "Mein Inhalt"
 pip install -e .[dev]
 ```
 
@@ -55,6 +69,7 @@ scrape2md --config configs/example.toml
 python scripts/crawl_site.py --config configs/example.toml
 ```
 
+Die Option `--config` ist verpflichtend. Ohne Angabe bricht das CLI mit einer klaren Fehlermeldung ab.
 Ausgabe am Ende:
 - Anzahl Seiten
 - Anzahl Assets
@@ -65,6 +80,7 @@ Ausgabe am Ende:
 
 Siehe `configs/example.toml`.
 
+Die Datei wird an den in `output_path` definierten Ort geschrieben.
 Wichtige Felder:
 - `start_url`
 - `output_root`
