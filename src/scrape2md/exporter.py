@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import re
 import time
 from collections import deque
 from pathlib import Path
@@ -160,22 +161,72 @@ class SiteExporter:
         return manifest, export_root
 
     def _discover_from_sitemap(self, page_url: str) -> list[str]:
-        sitemap_url = urljoin(page_url, "/sitemap.xml")
+        allowed_domains = self.config.allowed_domains or [normalize_url(self.config.start_url).split("/")[2]]
+        candidates = [urljoin(page_url, "/sitemap.xml")]
+
         try:
-            with httpx.Client(timeout=self.config.request_timeout, follow_redirects=True, headers={"User-Agent": self.config.user_agent}) as client:
-                response = client.get(sitemap_url)
-                response.raise_for_status()
-            soup = BeautifulSoup(response.text, "xml")
-            discovered = sorted(
-                {
-                    normalize_url(loc.text.strip())
-                    for loc in soup.find_all("loc")
-                    if loc.text and is_same_domain(loc.text.strip(), self.config.allowed_domains or [normalize_url(self.config.start_url).split('/')[2]])
-                }
-            )
-            if discovered:
-                logger.info("No links on root page; discovered %s urls via %s", len(discovered), sitemap_url)
-            return discovered
+            with httpx.Client(
+                timeout=self.config.request_timeout,
+                follow_redirects=True,
+                headers={"User-Agent": self.config.user_agent},
+            ) as client:
+                robots_url = urljoin(page_url, "/robots.txt")
+                try:
+                    robots_response = client.get(robots_url)
+                    if robots_response.status_code < 400:
+                        for line in robots_response.text.splitlines():
+                            if line.lower().startswith("sitemap:"):
+                                sitemap_url = line.split(":", 1)[1].strip()
+                                if sitemap_url:
+                                    candidates.append(sitemap_url)
+                except Exception as exc:
+                    logger.debug("robots.txt discovery failed at %s: %s", robots_url, exc)
+
+                seen_sitemaps: set[str] = set()
+                queue: deque[str] = deque(candidates)
+                discovered_pages: set[str] = set()
+
+                while queue:
+                    sitemap_url = normalize_url(queue.popleft())
+                    if sitemap_url in seen_sitemaps:
+                        continue
+                    seen_sitemaps.add(sitemap_url)
+
+                    try:
+                        response = client.get(sitemap_url)
+                        response.raise_for_status()
+                    except Exception as exc:
+                        logger.debug("Sitemap request failed at %s: %s", sitemap_url, exc)
+                        continue
+
+                    locs = _extract_sitemap_locs(response.text)
+                    if not locs:
+                        logger.debug("No <loc> entries found in sitemap %s", sitemap_url)
+                        continue
+
+                    for loc in locs:
+                        normalized = normalize_url(loc)
+                        if not is_same_domain(normalized, allowed_domains):
+                            continue
+                        if normalized.endswith(".xml") or normalized.endswith(".xml.gz"):
+                            if normalized not in seen_sitemaps:
+                                queue.append(normalized)
+                        else:
+                            discovered_pages.add(normalized)
+
+                if discovered_pages:
+                    logger.info("No links on root page; discovered %s urls via sitemap", len(discovered_pages))
+                else:
+                    logger.info("No links on root page and no crawlable URLs found in sitemap/robots discovery")
+                return sorted(discovered_pages)
         except Exception as exc:
-            logger.debug("Sitemap discovery failed at %s: %s", sitemap_url, exc)
+            logger.debug("Sitemap discovery failed: %s", exc)
             return []
+
+
+def _extract_sitemap_locs(xml_text: str) -> list[str]:
+    soup = BeautifulSoup(xml_text, "xml")
+    locs = [loc.text.strip() for loc in soup.find_all("loc") if loc.text and loc.text.strip()]
+    if locs:
+        return locs
+    return [match.strip() for match in re.findall(r"<loc>\s*(.*?)\s*</loc>", xml_text, flags=re.IGNORECASE | re.DOTALL)]

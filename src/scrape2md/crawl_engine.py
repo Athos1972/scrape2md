@@ -78,6 +78,9 @@ class CrawlEngine:
         html = getattr(result, "html", "") or ""
         markdown = getattr(result, "markdown", "") or md(html)
         title, links, assets = _extract_links(url, html, self._attachment_extensions)
+        c4_links, c4_assets = _extract_links_from_crawl4ai_result(url, result, self._attachment_extensions)
+        links = sorted(set(links + c4_links))
+        assets = sorted(set(assets + c4_assets))
         status = getattr(result, "status_code", None)
         ctype = getattr(result, "response_headers", {}).get("content-type") if getattr(result, "response_headers", None) else None
         return CrawlResult(
@@ -136,3 +139,37 @@ def _extract_links(base_url: str, html: str, attachment_extensions: tuple[str, .
             assets.append(absolute)
 
     return title, sorted(set(links)), sorted(set(assets))
+
+
+def _extract_links_from_crawl4ai_result(
+    base_url: str,
+    result: Any,
+    attachment_extensions: tuple[str, ...],
+) -> tuple[list[str], list[str]]:
+    payload = getattr(result, "links", None)
+    if not isinstance(payload, dict):
+        return [], []
+
+    links: list[str] = []
+    assets: list[str] = []
+
+    for bucket_items in payload.values():
+        if not isinstance(bucket_items, list):
+            continue
+        for item in bucket_items:
+            href = None
+            if isinstance(item, str):
+                href = item
+            elif isinstance(item, dict):
+                href = item.get("href") or item.get("url")
+
+            if not href or str(href).startswith(("mailto:", "javascript:", "#")):
+                continue
+
+            absolute = urljoin(base_url, str(href))
+            if absolute.lower().endswith(attachment_extensions):
+                assets.append(absolute)
+            else:
+                links.append(absolute)
+
+    return sorted(set(links)), sorted(set(assets))
