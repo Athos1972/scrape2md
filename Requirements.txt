@@ -1,0 +1,5 @@
+crawl4ai
+httpx
+beautifulsoup4
+markdownify
+typer

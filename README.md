@@ -63,8 +63,6 @@ pip install -e .[dev]
 ## CLI-Beispiele
 
 ```bash
-scrape2md https://example.com/docs
-scrape2md crawl https://example.com/docs
 scrape2md --config configs/example.toml
 python scripts/crawl_site.py --config configs/example.toml
 ```
@@ -93,14 +91,6 @@ Wichtige Felder:
 - `user_agent`
 
 ## Exportstruktur
-
-```text
-exports/<domain>/
-  html/
-  pages/
-  assets/
-  manifest.json
-```
 
 Beispiel:
 
