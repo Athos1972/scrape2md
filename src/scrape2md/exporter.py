@@ -19,7 +19,15 @@ logger = logging.getLogger(__name__)
 class SiteExporter:
     def __init__(self, config: CrawlConfig) -> None:
         self.config = config
-        self.engine = CrawlEngine(timeout=config.request_timeout, user_agent=config.user_agent)
+        self.engine = CrawlEngine(
+            timeout=config.request_timeout,
+            user_agent=config.user_agent,
+            attachment_extensions=config.attachment_extensions,
+            render_js=config.render_js,
+            wait_for_selector=config.wait_for_selector,
+            wait_time_ms=config.wait_time_ms,
+            wait_until=config.wait_until,
+        )
         self.downloader = AttachmentDownloader(config)
 
     def run(self) -> tuple[Manifest, Path]:
@@ -41,15 +49,32 @@ class SiteExporter:
         queue: deque[tuple[str, int, str | None]] = deque([(normalize_url(self.config.start_url), 0, None)])
         visited: set[str] = set()
 
+        logger.info(
+            "Starting crawl start_url=%s allowed_domains=%s include_patterns=%s exclude_patterns=%s max_depth=%s max_pages=%s",
+            self.config.start_url,
+            self.config.allowed_domains,
+            self.config.include_patterns,
+            self.config.exclude_patterns,
+            self.config.max_depth,
+            self.config.max_pages,
+        )
+
         while queue and len(manifest.pages) < self.config.max_pages:
             url, depth, discovered_from = queue.popleft()
             if url in visited or depth > self.config.max_depth:
+                logger.debug(
+                    "Skipping url=%s reason=%s",
+                    url,
+                    "visited" if url in visited else f"max_depth_exceeded({depth}>{self.config.max_depth})",
+                )
                 continue
             visited.add(url)
 
             if not is_same_domain(url, self.config.allowed_domains or [domain]):
+                logger.debug("Skipping url=%s reason=domain_filter", url)
                 continue
             if not matches_patterns(url, self.config.include_patterns, self.config.exclude_patterns):
+                logger.debug("Skipping url=%s reason=pattern_filter", url)
                 continue
 
             try:
@@ -81,6 +106,7 @@ class SiteExporter:
                         internal_links=result.internal_links,
                         asset_links=result.asset_links,
                         content_hash=sha256_text(result.html),
+                        fetch_mode=result.fetch_mode,
                         success=True,
                     )
                 )
@@ -101,7 +127,13 @@ class SiteExporter:
                 if self.config.rate_limit_seconds > 0:
                     time.sleep(self.config.rate_limit_seconds)
 
-                logger.info("Crawled page %s", normalized_url)
+                logger.info(
+                    "Crawled page %s mode=%s discovered_links=%s discovered_assets=%s",
+                    normalized_url,
+                    result.fetch_mode,
+                    len(result.internal_links),
+                    len(result.asset_links),
+                )
             except Exception as exc:
                 logger.error("Failed page %s: %s", url, exc)
                 manifest.errors.append(

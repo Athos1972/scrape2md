@@ -3,12 +3,26 @@ output_root = "exports"
 allowed_domains = ["docs.example.com"]
 include_patterns = []
 exclude_patterns = ["/logout", "/auth"]
-max_pages = 100
-max_depth = 2
+
+# Empfohlene Startwerte für Doku-Seiten:
+max_pages = 2000
+max_depth = 8
+
+# Attachments
+# Für binäre Dokumente/Dateien, die mitgesichert werden sollen.
 download_attachments = true
 attachment_extensions = [".pdf", ".zip", ".docx", ".xlsx", ".png", ".jpg", ".xsd"]
+
+# Request-Verhalten
 request_timeout = 20.0
-rate_limit_seconds = 3
+rate_limit_seconds = 0.5
 save_html = true
 save_markdown = true
 user_agent = "scrape2md/0.1.0"
+
+# Dynamische Seiten (JS-Rendering über crawl4ai)
+render_js = true
+wait_for_selector = "main"
+wait_time_ms = 2000
+# Optional: je nach crawl4ai-Version wirksam
+wait_until = "networkidle"
