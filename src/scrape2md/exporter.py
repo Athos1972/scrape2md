@@ -4,6 +4,10 @@ import logging
 import time
 from collections import deque
 from pathlib import Path
+from urllib.parse import urljoin
+
+import httpx
+from bs4 import BeautifulSoup
 
 from scrape2md import __version__
 from scrape2md.attachments import AttachmentDownloader
@@ -116,6 +120,12 @@ class SiteExporter:
                     if n_link not in visited:
                         queue.append((n_link, depth + 1, normalized_url))
 
+                if depth == 0 and not result.internal_links:
+                    for sitemap_link in self._discover_from_sitemap(normalized_url):
+                        n_link = normalize_url(sitemap_link)
+                        if n_link not in visited:
+                            queue.append((n_link, depth + 1, normalized_url))
+
                 if self.config.download_attachments:
                     for asset_url in result.asset_links:
                         asset, error = self.downloader.download(asset_url, assets_dir, normalized_url)
@@ -148,3 +158,24 @@ class SiteExporter:
         manifest.finish()
         write_manifest(manifest, export_root / "manifest.json")
         return manifest, export_root
+
+    def _discover_from_sitemap(self, page_url: str) -> list[str]:
+        sitemap_url = urljoin(page_url, "/sitemap.xml")
+        try:
+            with httpx.Client(timeout=self.config.request_timeout, follow_redirects=True, headers={"User-Agent": self.config.user_agent}) as client:
+                response = client.get(sitemap_url)
+                response.raise_for_status()
+            soup = BeautifulSoup(response.text, "xml")
+            discovered = sorted(
+                {
+                    normalize_url(loc.text.strip())
+                    for loc in soup.find_all("loc")
+                    if loc.text and is_same_domain(loc.text.strip(), self.config.allowed_domains or [normalize_url(self.config.start_url).split('/')[2]])
+                }
+            )
+            if discovered:
+                logger.info("No links on root page; discovered %s urls via %s", len(discovered), sitemap_url)
+            return discovered
+        except Exception as exc:
+            logger.debug("Sitemap discovery failed at %s: %s", sitemap_url, exc)
+            return []

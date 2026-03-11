@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 from dataclasses import dataclass
 from typing import Any
 from urllib.parse import urljoin
@@ -8,6 +9,8 @@ from urllib.parse import urljoin
 import httpx
 from bs4 import BeautifulSoup
 from markdownify import markdownify as md
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass(slots=True)
@@ -47,7 +50,8 @@ class CrawlEngine:
     def fetch_page(self, url: str) -> CrawlResult:
         try:
             return self._fetch_with_crawl4ai(url)
-        except Exception:
+        except Exception as exc:
+            logger.warning("crawl4ai failed for %s, falling back to httpx: %s", url, exc)
             return self._fetch_with_httpx(url)
 
     def _fetch_with_crawl4ai(self, url: str) -> CrawlResult:
