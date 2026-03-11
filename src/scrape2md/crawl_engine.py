@@ -61,6 +61,7 @@ class CrawlResult:
     asset_links: list[str]
     fetch_mode: str
     discovery_stats: DiscoveryStats
+    link_debug: dict[str, Any] | None = None
 
 
 class CrawlEngine:
@@ -173,7 +174,7 @@ class CrawlEngine:
         markdown = getattr(result, "markdown", "") or md(raw_html)
         title = getattr(result, "title", None) or _extract_title(raw_html)
 
-        internal_links, asset_links, stats = discover_links(
+        internal_links, asset_links, stats, link_debug = discover_links(
             page_url=getattr(result, "url", url) or url,
             html=raw_html,
             crawl4ai_links_payload=getattr(result, "links", None),
@@ -181,6 +182,7 @@ class CrawlEngine:
             allowed_domains=allowed_domains,
             include_patterns=include_patterns,
             exclude_patterns=exclude_patterns,
+            return_debug=True,
         )
 
         status = getattr(result, "status_code", None)
@@ -197,6 +199,7 @@ class CrawlEngine:
             asset_links=asset_links,
             fetch_mode="crawl4ai",
             discovery_stats=stats,
+            link_debug=link_debug,
         )
 
     def _build_js_code_before_wait(self) -> str | None:
@@ -220,7 +223,7 @@ class CrawlEngine:
             response.raise_for_status()
         html = response.text
         title = _extract_title(html)
-        internal_links, asset_links, stats = discover_links(
+        internal_links, asset_links, stats, link_debug = discover_links(
             page_url=str(response.url),
             html=html,
             crawl4ai_links_payload=None,
@@ -228,6 +231,7 @@ class CrawlEngine:
             allowed_domains=allowed_domains,
             include_patterns=include_patterns,
             exclude_patterns=exclude_patterns,
+            return_debug=True,
         )
         return CrawlResult(
             url=str(response.url),
@@ -241,6 +245,7 @@ class CrawlEngine:
             asset_links=asset_links,
             fetch_mode="httpx",
             discovery_stats=stats,
+            link_debug=link_debug,
         )
 
 

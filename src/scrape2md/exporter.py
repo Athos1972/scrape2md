@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import logging
 import time
 from collections import deque
@@ -125,6 +126,9 @@ class SiteExporter:
                     if result.cleaned_html:
                         cleaned_debug_path = debug_dir / f"{md_rel.as_posix().replace('/', '__')}.cleaned.html"
                         cleaned_debug_path.write_text(result.cleaned_html, encoding="utf-8")
+                    if result.link_debug is not None:
+                        link_debug_path = debug_dir / f"{md_rel.as_posix().replace('/', '__')}.link_analysis.json"
+                        link_debug_path.write_text(json.dumps(result.link_debug, ensure_ascii=False, indent=2), encoding="utf-8")
                 if self.config.debug_save_screenshot:
                     logger.debug("debug_save_screenshot enabled, but screenshot capture is not supported in this runtime.")
 
@@ -205,6 +209,25 @@ class SiteExporter:
                     result.discovery_stats.filtered_asset_count,
                     str(html_path) if self.config.save_html else "-",
                 )
+
+                if self.config.debug_mode and result.link_debug is not None:
+                    logger.debug(
+                        "Link analysis %s: raw_result_links=%s raw_html_links=%s normalized=%s kept=%s dropped=%s",
+                        normalized_url,
+                        len(result.link_debug.get("raw_result_links", [])),
+                        len(result.link_debug.get("raw_html_links", [])),
+                        len(result.link_debug.get("normalized_links", [])),
+                        len(result.link_debug.get("kept_links", [])),
+                        len(result.link_debug.get("dropped_links_with_reason", [])),
+                    )
+                    for dropped in result.link_debug.get("dropped_links_with_reason", []):
+                        logger.debug(
+                            "Dropped link url=%s normalized=%s reason=%s source=%s",
+                            dropped.get("raw_url"),
+                            dropped.get("normalized_url"),
+                            dropped.get("reason"),
+                            dropped.get("source"),
+                        )
 
                 if not result.internal_links:
                     logger.warning(

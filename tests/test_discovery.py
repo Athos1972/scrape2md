@@ -1,4 +1,5 @@
 from scrape2md.discovery import (
+    _is_internal_domain,
     discover_links,
     discover_urls_from_sitemaps,
     extract_links_from_crawl4ai_payload,
@@ -46,9 +47,15 @@ def test_extract_links_from_html_fallback() -> None:
     assert assets == ["https://example.com/files/doc.pdf"]
 
 
-def test_normalize_discovered_url_filters_non_http() -> None:
+def test_normalize_discovered_url_filters_non_http_and_keeps_query_order() -> None:
     assert normalize_discovered_url("tel:+43123", "https://example.com") is None
-    assert normalize_discovered_url("/x?b=2&a=1&utm_source=t", "https://example.com") == "https://example.com/x?a=1&b=2"
+    assert normalize_discovered_url("/x?b=2&a=1&utm_source=t", "https://example.com") == "https://example.com/x?b=2&a=1"
+
+
+def test_normalize_discovered_url_relative_resolution_and_dedup_shapes() -> None:
+    assert normalize_discovered_url("/konsultation", "https://www.apcs.at/de/start") == "https://www.apcs.at/konsultation"
+    assert normalize_discovered_url("team", "https://www.apcs.at/de/start") == "https://www.apcs.at/de/team"
+    assert normalize_discovered_url("/foo/index.html", "https://example.com") == "https://example.com/foo/index.html"
 
 
 def test_extract_sitemap_locs_with_namespaces() -> None:
@@ -61,21 +68,55 @@ def test_extract_sitemap_locs_with_namespaces() -> None:
     assert extract_sitemap_locs(xml) == ["https://example.com/page-a", "https://example.com/page-b"]
 
 
-def test_discover_links_applies_filters() -> None:
-    internal, assets, stats = discover_links(
+def test_discover_links_applies_filters_and_reasons() -> None:
+    internal, assets, stats, debug = discover_links(
         page_url="https://example.com",
-        html='<a href="/a">A</a><a href="https://other.com/x">X</a><a href="/f.pdf">F</a>',
+        html='<a href="/a">A</a><a href="https://other.com/x">X</a><a href="/f.pdf">F</a><a href="#top">T</a>',
         crawl4ai_links_payload={"internal": [{"href": "/b"}]},
         attachment_extensions=(".pdf",),
         allowed_domains=["example.com"],
         include_patterns=[],
         exclude_patterns=["*b"],
+        return_debug=True,
     )
 
     assert internal == ["https://example.com/a"]
     assert assets == ["https://example.com/f.pdf"]
     assert stats.crawl4ai_link_count == 1
-    assert stats.html_href_count == 3
+    assert stats.html_href_count == 4
+    reasons = {item["reason"] for item in debug["dropped_links_with_reason"]}
+    assert {"excluded-by-pattern", "external-domain", "anchor-only"}.issubset(reasons)
+
+
+def test_internal_domain_handles_www_variants() -> None:
+    assert _is_internal_domain("https://www.apcs.at/path", ["apcs.at"])
+    assert _is_internal_domain("https://apcs.at/path", ["www.apcs.at"])
+
+
+def test_dedup_keeps_distinct_internal_urls_but_merges_trailing_slash() -> None:
+    internal, _, _, debug = discover_links(
+        page_url="https://example.com",
+        html=''.join(
+            [
+                '<a href="/foo">foo</a>',
+                '<a href="/foo/">foo2</a>',
+                '<a href="/foo/index.html">foo3</a>',
+                '<a href="/foo?x=1">foo4</a>',
+            ]
+        ),
+        crawl4ai_links_payload=None,
+        attachment_extensions=(".pdf",),
+        allowed_domains=["example.com"],
+        include_patterns=[],
+        exclude_patterns=[],
+        return_debug=True,
+    )
+    assert internal == [
+        "https://example.com/foo",
+        "https://example.com/foo/index.html",
+        "https://example.com/foo?x=1",
+    ]
+    assert any(item["reason"] == "duplicate-after-normalization" for item in debug["dropped_links_with_reason"])
 
 
 def test_discover_urls_from_sitemaps(monkeypatch) -> None:

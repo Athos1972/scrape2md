@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import logging
 from collections import deque
+from dataclasses import dataclass
 import gzip
 from html.parser import HTMLParser
 from typing import Any
@@ -14,7 +15,16 @@ from scrape2md.utils import is_same_domain, matches_patterns
 
 logger = logging.getLogger(__name__)
 
-SKIP_SCHEMES = ("mailto:", "tel:", "javascript:", "#")
+SKIP_SCHEMES = ("mailto:", "tel:", "javascript:")
+
+
+@dataclass(slots=True)
+class LinkDecision:
+    source: str
+    raw_url: str
+    normalized_url: str | None
+    decision: str
+    reason: str
 
 
 class DiscoveryStats:
@@ -44,14 +54,41 @@ class _HTMLLinkParser(HTMLParser):
             self.assets.append(attr_map["href"] or "")
 
 
+def _normalize_allowed_domain(domain: str) -> str:
+    cleaned = (domain or "").strip().lower()
+    if cleaned.startswith("www."):
+        return cleaned[4:]
+    return cleaned
+
+
+def _is_internal_domain(url: str, allowed_domains: list[str]) -> bool:
+    host = (urlparse(url).hostname or "").lower()
+    normalized_host = _normalize_allowed_domain(host)
+    normalized_allowed = [_normalize_allowed_domain(domain) for domain in allowed_domains]
+    return any(
+        normalized_host == domain
+        or normalized_host.endswith(f".{domain}")
+        or host == domain
+        or host.endswith(f".{domain}")
+        for domain in normalized_allowed
+    )
+
+
 def normalize_discovered_url(url: str, base_url: str | None = None) -> str | None:
     raw = (url or "").strip()
-    if not raw or raw.lower().startswith(SKIP_SCHEMES):
+    if not raw:
+        return None
+    if raw.startswith("#"):
+        return None
+    lower_raw = raw.lower()
+    if lower_raw.startswith(SKIP_SCHEMES):
         return None
 
     absolute = urljoin(base_url, raw) if base_url else raw
     parsed = urlparse(absolute)
     if parsed.scheme.lower() not in {"http", "https"}:
+        return None
+    if not parsed.netloc:
         return None
 
     path = parsed.path or "/"
@@ -59,13 +96,15 @@ def normalize_discovered_url(url: str, base_url: str | None = None) -> str | Non
         path = path.replace("//", "/")
     if not path.startswith("/"):
         path = f"/{path}"
-    path = path.rstrip("/") or "/"
 
-    filtered_query = sorted(
+    if path.lower() in {"/index", "/index.html"}:
+        path = "/"
+
+    filtered_query = [
         (k, v)
         for k, v in parse_qsl(parsed.query, keep_blank_values=True)
-        if not k.lower().startswith(("utm_", "fbclid", "gclid", "msclkid"))
-    )
+        if k and not k.lower().startswith(("utm_", "fbclid", "gclid", "msclkid"))
+    ]
     query = urlencode(filtered_query)
 
     return urlunparse((parsed.scheme.lower(), parsed.netloc.lower(), path, "", query, ""))
@@ -85,9 +124,15 @@ def extract_links_from_html(base_url: str, html: str) -> tuple[list[str], list[s
 
 
 def extract_links_from_crawl4ai_payload(base_url: str, payload: Any) -> list[str]:
+    discovered, _ = extract_raw_links_from_crawl4ai_payload(base_url, payload)
+    return sorted(set(discovered))
+
+
+def extract_raw_links_from_crawl4ai_payload(base_url: str, payload: Any) -> tuple[list[str], list[str]]:
     if not isinstance(payload, dict):
-        return []
-    discovered: list[str] = []
+        return [], []
+    normalized: list[str] = []
+    raw_links: list[str] = []
     for bucket_items in payload.values():
         if not isinstance(bucket_items, list):
             continue
@@ -95,10 +140,136 @@ def extract_links_from_crawl4ai_payload(base_url: str, payload: Any) -> list[str
             href = item if isinstance(item, str) else item.get("href") or item.get("url") if isinstance(item, dict) else None
             if not href:
                 continue
-            normalized = normalize_discovered_url(str(href), base_url=base_url)
-            if normalized:
-                discovered.append(normalized)
-    return sorted(set(discovered))
+            raw_links.append(str(href))
+            normalized_url = normalize_discovered_url(str(href), base_url=base_url)
+            if normalized_url:
+                normalized.append(normalized_url)
+    return normalized, raw_links
+
+
+def _canonical_dedup_key(url: str) -> str:
+    parsed = urlparse(url)
+    path = parsed.path
+    if path != "/" and path.endswith("/"):
+        path = path[:-1]
+    return urlunparse((parsed.scheme, parsed.netloc, path or "/", "", parsed.query, ""))
+
+
+def _classify_link(
+    *,
+    source: str,
+    raw_url: str,
+    page_url: str,
+    attachment_extensions: tuple[str, ...],
+    allowed_domains: list[str],
+    include_patterns: list[str],
+    exclude_patterns: list[str],
+    dedup_seen: set[str],
+) -> tuple[str | None, LinkDecision]:
+    raw = (raw_url or "").strip()
+    if not raw:
+        return None, LinkDecision(source=source, raw_url=raw_url, normalized_url=None, decision="drop", reason="invalid-url")
+
+    lower_raw = raw.lower()
+    if raw.startswith("#"):
+        return None, LinkDecision(source=source, raw_url=raw_url, normalized_url=None, decision="drop", reason="anchor-only")
+    if lower_raw.startswith(SKIP_SCHEMES):
+        return None, LinkDecision(source=source, raw_url=raw_url, normalized_url=None, decision="drop", reason="mailto/tel/javascript")
+
+    normalized = normalize_discovered_url(raw, base_url=page_url)
+    if not normalized:
+        reason = "non-http" if ":" in raw and not lower_raw.startswith(("http://", "https://")) else "invalid-url"
+        return None, LinkDecision(source=source, raw_url=raw_url, normalized_url=None, decision="drop", reason=reason)
+
+    if normalized.lower().endswith(attachment_extensions):
+        return normalized, LinkDecision(source=source, raw_url=raw_url, normalized_url=normalized, decision="asset", reason="attachment")
+    if not _is_internal_domain(normalized, allowed_domains):
+        return None, LinkDecision(source=source, raw_url=raw_url, normalized_url=normalized, decision="drop", reason="external-domain")
+    if not matches_patterns(normalized, include_patterns, exclude_patterns):
+        return None, LinkDecision(source=source, raw_url=raw_url, normalized_url=normalized, decision="drop", reason="excluded-by-pattern")
+
+    dedup_key = _canonical_dedup_key(normalized)
+    if dedup_key in dedup_seen:
+        return None, LinkDecision(source=source, raw_url=raw_url, normalized_url=normalized, decision="drop", reason="duplicate-after-normalization")
+    dedup_seen.add(dedup_key)
+    return normalized, LinkDecision(source=source, raw_url=raw_url, normalized_url=normalized, decision="keep", reason="kept")
+
+
+def discover_links(
+    *,
+    page_url: str,
+    html: str,
+    crawl4ai_links_payload: Any,
+    attachment_extensions: tuple[str, ...],
+    allowed_domains: list[str],
+    include_patterns: list[str],
+    exclude_patterns: list[str],
+    return_debug: bool = False,
+) -> tuple[list[str], list[str], DiscoveryStats] | tuple[list[str], list[str], DiscoveryStats, dict[str, Any]]:
+    parser = _HTMLLinkParser()
+    if html.strip():
+        parser.feed(html)
+
+    _, raw_c4_links = extract_raw_links_from_crawl4ai_payload(page_url, crawl4ai_links_payload)
+    raw_html_links = parser.hrefs
+    raw_html_assets = parser.assets
+
+    kept_internal: list[str] = []
+    kept_assets: list[str] = []
+    decisions: list[LinkDecision] = []
+    dedup_seen: set[str] = set()
+
+    for source, raw_candidates in (("result.links", raw_c4_links), ("html-fallback", raw_html_links), ("html-assets", raw_html_assets)):
+        for raw in raw_candidates:
+            normalized, decision = _classify_link(
+                source=source,
+                raw_url=raw,
+                page_url=page_url,
+                attachment_extensions=attachment_extensions,
+                allowed_domains=allowed_domains,
+                include_patterns=include_patterns,
+                exclude_patterns=exclude_patterns,
+                dedup_seen=dedup_seen,
+            )
+            decisions.append(decision)
+            if not normalized:
+                continue
+            if decision.decision == "asset":
+                kept_assets.append(normalized)
+            elif decision.decision == "keep":
+                kept_internal.append(normalized)
+
+    internal = sorted(set(kept_internal))
+    assets = sorted(set(kept_assets))
+
+    stats = DiscoveryStats(
+        crawl4ai_link_count=len(raw_c4_links),
+        html_href_count=len(raw_html_links),
+        filtered_internal_count=len(internal),
+        filtered_asset_count=len(assets),
+    )
+
+    if not return_debug:
+        return internal, assets, stats
+
+    debug_payload = {
+        "raw_result_links": raw_c4_links,
+        "raw_html_links": raw_html_links,
+        "normalized_links": sorted({d.normalized_url for d in decisions if d.normalized_url}),
+        "kept_links": internal,
+        "kept_assets": assets,
+        "dropped_links_with_reason": [
+            {
+                "source": d.source,
+                "raw_url": d.raw_url,
+                "normalized_url": d.normalized_url,
+                "reason": d.reason,
+            }
+            for d in decisions
+            if d.decision == "drop"
+        ],
+    }
+    return internal, assets, stats, debug_payload
 
 
 def split_internal_and_assets(links: list[str], attachment_extensions: tuple[str, ...], allowed_domains: list[str], include_patterns: list[str], exclude_patterns: list[str]) -> tuple[list[str], list[str]]:
@@ -114,25 +285,6 @@ def split_internal_and_assets(links: list[str], attachment_extensions: tuple[str
             continue
         internal.append(link)
     return sorted(set(internal)), sorted(set(assets))
-
-
-def discover_links(*, page_url: str, html: str, crawl4ai_links_payload: Any, attachment_extensions: tuple[str, ...], allowed_domains: list[str], include_patterns: list[str], exclude_patterns: list[str]) -> tuple[list[str], list[str], DiscoveryStats]:
-    c4_links = extract_links_from_crawl4ai_payload(page_url, crawl4ai_links_payload)
-    html_links, html_assets = extract_links_from_html(page_url, html)
-
-    internal, assets = split_internal_and_assets(
-        links=sorted(set(c4_links + html_links)),
-        attachment_extensions=attachment_extensions,
-        allowed_domains=allowed_domains,
-        include_patterns=include_patterns,
-        exclude_patterns=exclude_patterns,
-    )
-    for item in html_assets:
-        if item.lower().endswith(attachment_extensions):
-            assets.append(item)
-
-    stats = DiscoveryStats(len(c4_links), len(html_links), len(set(internal)), len(set(assets)))
-    return sorted(set(internal)), sorted(set(assets)), stats
 
 
 def extract_sitemap_locs(xml_text: str) -> list[str]:
