@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import logging
 from pathlib import Path
+from urllib.parse import urlparse
 
 import httpx
 
@@ -15,8 +16,20 @@ class AttachmentDownloader:
     def __init__(self, config: CrawlConfig) -> None:
         self._config = config
         self._downloaded: set[str] = set()
+        self._attachment_extensions = tuple(
+            ext.lower() if ext.startswith(".") else f".{ext.lower()}"
+            for ext in config.attachment_extensions
+        )
+
+    def _is_configured_attachment_url(self, url: str) -> bool:
+        path = urlparse(url).path.lower()
+        return bool(path) and path.endswith(self._attachment_extensions)
 
     def download(self, url: str, output_dir: Path, discovered_from: str | None) -> tuple[AssetRecord | None, ErrorRecord | None]:
+        if not self._is_configured_attachment_url(url):
+            logger.debug("skip_attachment_unconfigured_extension url=%s", url)
+            return None, None
+
         if url in self._downloaded:
             return None, None
         self._downloaded.add(url)
