@@ -162,3 +162,25 @@ def test_discover_urls_from_sitemaps(monkeypatch) -> None:
 
     assert pages == ["https://example.com/a"]
     assert assets == ["https://example.com/file.pdf"]
+
+
+def test_discover_links_classifies_image_extensions_and_hints_as_assets() -> None:
+    internal, assets, _, _ = discover_links(
+        page_url="https://example.com",
+        html=''.join(
+            [
+                '<a href="/docs">Docs</a>',
+                '<a href="/img/logo">Logo</a>',
+                '<a href="/img/pic.png">PNG</a>',
+            ]
+        ),
+        crawl4ai_links_payload=None,
+        attachment_extensions=(".pdf",),
+        allowed_domains=["example.com"],
+        include_patterns=[],
+        exclude_patterns=[],
+        return_debug=True,
+    )
+
+    assert internal == ["https://example.com/docs"]
+    assert assets == ["https://example.com/img/logo", "https://example.com/img/pic.png"]
