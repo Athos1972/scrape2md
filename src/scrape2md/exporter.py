@@ -68,6 +68,7 @@ class SiteExporter:
 
         queue: deque[tuple[str, int, str | None]] = deque([(normalize_url(self.config.start_url), 0, None)])
         visited: set[str] = set()
+        crawled_count = 0
 
         logger.info(
             "Starting crawl start_url=%s allowed_domains=%s include_patterns=%s exclude_patterns=%s max_depth=%s max_pages=%s dynamic_mode=%s",
@@ -206,6 +207,26 @@ class SiteExporter:
                             manifest.assets.append(asset)
                         if error:
                             manifest.errors.append(error)
+
+                crawled_count += 1
+                backlog = len(queue)
+                discovered = len(visited) + len(queue)
+                if self.config.max_pages > 0:
+                    progress = crawled_count / self.config.max_pages * 100
+                    logger.info(
+                        "CRAWL_PROGRESS crawled=%d backlog=%d discovered=%d progress=%.0f%%",
+                        crawled_count,
+                        backlog,
+                        discovered,
+                        progress,
+                    )
+                else:
+                    logger.info(
+                        "CRAWL_PROGRESS crawled=%d backlog=%d discovered=%d",
+                        crawled_count,
+                        backlog,
+                        discovered,
+                    )
 
                 if self.config.rate_limit_seconds > 0:
                     time.sleep(self.config.rate_limit_seconds)
