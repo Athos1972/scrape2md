@@ -13,7 +13,7 @@ from scrape2md.discovery import discover_urls_from_sitemaps
 from scrape2md.manifest import write_manifest
 from scrape2md.models import CrawlConfig, ErrorRecord, Manifest, PageRecord
 from scrape2md.url_mapper import normalize_url, url_to_rel_path
-from scrape2md.utils import is_same_domain, matches_patterns, sha256_text
+from scrape2md.utils import is_binary_content_type, is_html_content_type, is_same_domain, matches_patterns, sha256_text
 
 logger = logging.getLogger(__name__)
 
@@ -113,10 +113,24 @@ class SiteExporter:
                 html_path.parent.mkdir(parents=True, exist_ok=True)
                 md_path.parent.mkdir(parents=True, exist_ok=True)
 
+                content_type = result.content_type or ""
+                is_html_resource = is_html_content_type(content_type)
+                markdown_content = (result.markdown or "").strip()
+                should_write_markdown = self.config.save_markdown and is_html_resource and bool(markdown_content)
+                markdown_skip_reason: str | None = None
                 if self.config.save_html:
                     html_path.write_text(result.html, encoding="utf-8")
                 if self.config.save_markdown:
-                    md_path.write_text(result.markdown, encoding="utf-8")
+                    if not is_html_resource:
+                        markdown_skip_reason = "skip_markdown_non_html"
+                        logger.info("%s url=%s content_type=%s", markdown_skip_reason, normalized_url, content_type or "-")
+                        if is_binary_content_type(content_type):
+                            logger.debug("classified_as_asset_by_content_type url=%s content_type=%s", normalized_url, content_type or "-")
+                    elif not markdown_content:
+                        markdown_skip_reason = "skip_markdown_empty_content"
+                        logger.info("%s url=%s", markdown_skip_reason, normalized_url)
+                    else:
+                        md_path.write_text(result.markdown, encoding="utf-8")
 
                 screenshot_path: str | None = None
                 if self.config.debug_mode:
@@ -137,7 +151,7 @@ class SiteExporter:
                         url=result.url,
                         normalized_url=normalized_url,
                         local_html_path=str(html_path) if self.config.save_html else None,
-                        local_markdown_path=str(md_path) if self.config.save_markdown else None,
+                        local_markdown_path=str(md_path) if should_write_markdown else None,
                         title=result.title,
                         status_code=result.status_code,
                         content_type=result.content_type,
@@ -157,12 +171,12 @@ class SiteExporter:
                     )
                 )
 
-                for link in result.internal_links:
+                for link in result.internal_links if is_html_resource else []:
                     n_link = normalize_url(link)
                     if n_link not in visited:
                         queue.append((n_link, depth + 1, normalized_url))
 
-                if depth == 0 and not result.internal_links:
+                if depth == 0 and is_html_resource and not result.internal_links:
                     pages, sitemap_assets = discover_urls_from_sitemaps(
                         page_url=normalized_url,
                         request_timeout=self.config.request_timeout,

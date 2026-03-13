@@ -16,6 +16,23 @@ from scrape2md.utils import is_same_domain, matches_patterns
 logger = logging.getLogger(__name__)
 
 SKIP_SCHEMES = ("mailto:", "tel:", "javascript:")
+ASSET_EXTENSIONS = (
+    ".png",
+    ".jpg",
+    ".jpeg",
+    ".gif",
+    ".svg",
+    ".webp",
+    ".bmp",
+    ".ico",
+)
+ASSET_HINT_KEYWORDS = (
+    "favicon",
+    "apple-touch-icon",
+    "android-chrome",
+    "logo",
+    "sprite",
+)
 
 
 @dataclass(slots=True)
@@ -155,6 +172,14 @@ def _canonical_dedup_key(url: str) -> str:
     return urlunparse((parsed.scheme, parsed.netloc, path or "/", "", parsed.query, ""))
 
 
+def _looks_like_asset_url(url: str) -> bool:
+    lower_url = url.lower()
+    parsed = urlparse(lower_url)
+    path = parsed.path or ""
+    filename = path.rsplit("/", 1)[-1]
+    return path.endswith(ASSET_EXTENSIONS) or any(keyword in filename for keyword in ASSET_HINT_KEYWORDS)
+
+
 def _classify_link(
     *,
     source: str,
@@ -183,6 +208,10 @@ def _classify_link(
 
     if normalized.lower().endswith(attachment_extensions):
         return normalized, LinkDecision(source=source, raw_url=raw_url, normalized_url=normalized, decision="asset", reason="attachment")
+
+    if _looks_like_asset_url(normalized):
+        return normalized, LinkDecision(source=source, raw_url=raw_url, normalized_url=normalized, decision="asset", reason="asset-like-url")
+
     if not _is_internal_domain(normalized, allowed_domains):
         return None, LinkDecision(source=source, raw_url=raw_url, normalized_url=normalized, decision="drop", reason="external-domain")
     if not matches_patterns(normalized, include_patterns, exclude_patterns):
@@ -276,7 +305,7 @@ def split_internal_and_assets(links: list[str], attachment_extensions: tuple[str
     internal: list[str] = []
     assets: list[str] = []
     for link in links:
-        if link.lower().endswith(attachment_extensions):
+        if link.lower().endswith(attachment_extensions) or _looks_like_asset_url(link):
             assets.append(link)
             continue
         if not is_same_domain(link, allowed_domains):
@@ -348,7 +377,7 @@ def discover_urls_from_sitemaps(*, page_url: str, request_timeout: float, user_a
                 if normalized.endswith((".xml", ".xml.gz")):
                     queue.append(normalized)
                     continue
-                if normalized.lower().endswith(attachment_extensions):
+                if normalized.lower().endswith(attachment_extensions) or _looks_like_asset_url(normalized):
                     discovered_assets.add(normalized)
                     continue
                 if matches_patterns(normalized, include_patterns, exclude_patterns):
