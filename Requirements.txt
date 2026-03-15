@@ -1,3 +1,4 @@
+chardet<6
 crawl4ai
 httpx
 beautifulsoup4
