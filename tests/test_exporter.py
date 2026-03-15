@@ -75,3 +75,11 @@ def test_exporter_skips_empty_markdown_output(monkeypatch, tmp_path: Path) -> No
     export_root = _run_export(monkeypatch, tmp_path, result)
 
     assert not (export_root / "pages" / "empty.md").exists()
+
+
+def test_exporter_writes_markdown_when_html_header_is_missing(monkeypatch, tmp_path: Path) -> None:
+    result = _build_result("https://example.com/page", "", "# Hello", html="<html><body>Hello</body></html>")
+    export_root = _run_export(monkeypatch, tmp_path, result)
+
+    md_path = export_root / "pages" / "page.md"
+    assert md_path.exists()

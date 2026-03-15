@@ -20,6 +20,11 @@ class AttachmentDownloader:
             ext.lower() if ext.startswith(".") else f".{ext.lower()}"
             for ext in config.attachment_extensions
         )
+        self._client = httpx.Client(
+            timeout=self._config.request_timeout,
+            follow_redirects=True,
+            headers={"User-Agent": self._config.user_agent},
+        )
 
     def _is_configured_attachment_url(self, url: str) -> bool:
         path = urlparse(url).path.lower()
@@ -38,9 +43,8 @@ class AttachmentDownloader:
         local_path.parent.mkdir(parents=True, exist_ok=True)
 
         try:
-            with httpx.Client(timeout=self._config.request_timeout, follow_redirects=True) as client:
-                response = client.get(url)
-                response.raise_for_status()
+            response = self._client.get(url)
+            response.raise_for_status()
             local_path.write_bytes(response.content)
             return AssetRecord(
                 url=url,
@@ -58,3 +62,8 @@ class AttachmentDownloader:
                 error_type=type(exc).__name__,
                 message=str(exc),
             )
+
+    def close(self) -> None:
+        close_client = getattr(self._client, "close", None)
+        if callable(close_client):
+            close_client()

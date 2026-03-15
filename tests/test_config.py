@@ -31,6 +31,67 @@ def test_load_config_ignores_unknown_keys(tmp_path: Path) -> None:
     assert "querySelectorAll" in cfg.wait_for
 
 
+def test_load_config_applies_crawl_profile_defaults(tmp_path: Path) -> None:
+    config_path = tmp_path / "config.toml"
+    config_path.write_text(
+        "\n".join(
+            [
+                'start_url = "https://docs.example.com"',
+                'crawl_profile = "dynamic"',
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    cfg = load_config(config_path)
+
+    assert cfg.crawl_profile == "dynamic"
+    assert cfg.dynamic_mode is True
+    assert cfg.scan_full_page is True
+    assert cfg.enable_menu_clicks is True
+    assert cfg.wait_for == "css:a[href]"
+
+
+def test_load_config_profile_can_be_overridden_per_field(tmp_path: Path) -> None:
+    config_path = tmp_path / "config.toml"
+    config_path.write_text(
+        "\n".join(
+            [
+                'start_url = "https://docs.example.com"',
+                'crawl_profile = "dynamic"',
+                "process_iframes = false",
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    cfg = load_config(config_path)
+
+    assert cfg.crawl_profile == "dynamic"
+    assert cfg.process_iframes is False
+    assert cfg.flatten_shadow_dom is True
+
+
+def test_load_config_rejects_unknown_profile(tmp_path: Path) -> None:
+    config_path = tmp_path / "config.toml"
+    config_path.write_text(
+        "\n".join(
+            [
+                'start_url = "https://docs.example.com"',
+                'crawl_profile = "wild"',
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    try:
+        load_config(config_path)
+    except ValueError as exc:
+        assert "Unknown crawl_profile" in str(exc)
+    else:
+        raise AssertionError("Expected ValueError for unknown crawl profile")
+
+
 
 def test_load_config_crawl4ai_browser_fields(tmp_path: Path) -> None:
     config_path = tmp_path / "config.toml"

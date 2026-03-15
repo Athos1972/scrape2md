@@ -26,6 +26,11 @@ ASSET_EXTENSIONS = (
     ".bmp",
     ".ico",
 )
+SKIP_ASSET_EXTENSIONS = (
+    ".css",
+    ".js",
+    ".map",
+)
 ASSET_HINT_KEYWORDS = (
     "favicon",
     "apple-touch-icon",
@@ -67,7 +72,8 @@ class _HTMLLinkParser(HTMLParser):
                 self.hrefs.append(attr_map[attr] or "")
         if tag in {"img", "source", "video", "audio"} and attr_map.get("src"):
             self.assets.append(attr_map["src"] or "")
-        if tag == "link" and attr_map.get("href"):
+        rel = (attr_map.get("rel") or "").lower()
+        if tag == "link" and attr_map.get("href") and "stylesheet" not in rel:
             self.assets.append(attr_map["href"] or "")
 
 
@@ -208,6 +214,9 @@ def _classify_link(
 
     if normalized.lower().endswith(attachment_extensions):
         return normalized, LinkDecision(source=source, raw_url=raw_url, normalized_url=normalized, decision="asset", reason="attachment")
+
+    if normalized.lower().endswith(SKIP_ASSET_EXTENSIONS):
+        return None, LinkDecision(source=source, raw_url=raw_url, normalized_url=normalized, decision="drop", reason="ignored-static-asset")
 
     if _looks_like_asset_url(normalized):
         return normalized, LinkDecision(source=source, raw_url=raw_url, normalized_url=normalized, decision="asset", reason="asset-like-url")

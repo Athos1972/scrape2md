@@ -1,6 +1,7 @@
 from types import SimpleNamespace
 
 from scrape2md.crawl_engine import (
+    CrawlEngine,
     _build_browser_config_payload,
     _build_run_config_payload,
     _extract_title,
@@ -70,3 +71,51 @@ def test_discovery_uses_raw_html_source() -> None:
     assert internal == ["https://example.com/real"]
     assert assets == []
     assert stats.html_href_count == 1
+
+
+def test_html_to_markdown_prefers_main_content() -> None:
+    engine = CrawlEngine(
+        timeout=5,
+        user_agent="ua",
+        attachment_extensions=[".pdf"],
+        render_js=True,
+        wait_for_selector=None,
+        wait_time_ms=0,
+        wait_until=None,
+        dynamic_mode=False,
+        scan_full_page=False,
+        scroll_delay=0.3,
+        delay_before_return_html=0.8,
+        remove_consent_popups=True,
+        remove_overlay_elements=True,
+        process_iframes=False,
+        flatten_shadow_dom=False,
+        enable_menu_clicks=False,
+        wait_for=None,
+        js_code_before_wait=None,
+        js_code=None,
+        content_extraction="main",
+        headless=True,
+        java_script_enabled=True,
+        crawl4ai_verbose=False,
+    )
+    try:
+        markdown = engine._html_to_markdown(
+            """
+            <html><body>
+              <header><a href="/home">Home</a><a href="/docs">Docs</a></header>
+              <main>
+                <h1>Useful page</h1>
+                <p>This paragraph contains the useful content that should survive markdown generation.</p>
+              </main>
+              <footer><a href="/legal">Legal</a></footer>
+            </body></html>
+            """
+        )
+    finally:
+        engine.close()
+
+    assert "Useful page" in markdown
+    assert "useful content" in markdown
+    assert "Home" not in markdown
+    assert "Legal" not in markdown

@@ -1,5 +1,7 @@
 start_url = "https://docs.example.com/getting-started"
 output_root = "exports"
+crawl_profile = "dynamic"
+content_extraction = "main"
 allowed_domains = ["docs.example.com"]
 include_patterns = []
 exclude_patterns = ["/logout", "/auth"]
@@ -12,27 +14,14 @@ attachment_extensions = [".pdf", ".zip", ".docx", ".xlsx", ".png", ".jpg", ".xsd
 
 request_timeout = 20.0
 rate_limit_seconds = 0.5
-save_html = true
+save_html = false
 save_markdown = true
-user_agent = "scrape2md/0.1.0"
+user_agent = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/145.0.0.0 Safari/537.36"
 
-render_js = true
-wait_for_selector = "main"
-wait_time_ms = 2000
-wait_until = "networkidle"
-
-dynamic_mode = true
-scan_full_page = true
-scroll_delay = 0.5
-delay_before_return_html = 1.0
-remove_consent_popups = true
-remove_overlay_elements = true
-process_iframes = true
-flatten_shadow_dom = true
-enable_menu_clicks = true
-wait_for = "js:document.querySelectorAll('a[href]').length > 0 || document.readyState === 'complete'"
-js_code_before_wait = ""
-js_code = ""
+# Optional: profile defaults can still be overridden site-specifically.
+# process_iframes = false
+# wait_for = "js:() => document.readyState === 'complete'"
+# content_extraction = "aggressive"
 
 debug_mode = false
 debug_save_screenshot = false

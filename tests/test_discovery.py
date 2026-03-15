@@ -184,3 +184,26 @@ def test_discover_links_classifies_image_extensions_and_hints_as_assets() -> Non
 
     assert internal == ["https://example.com/docs"]
     assert assets == ["https://example.com/img/logo", "https://example.com/img/pic.png"]
+
+
+def test_discover_links_ignores_stylesheets() -> None:
+    internal, assets, _, debug = discover_links(
+        page_url="https://example.com",
+        html=''.join(
+            [
+                '<link rel="stylesheet" href="/assets/site.css">',
+                '<a href="/assets/print.css">Print</a>',
+                '<a href="/docs">Docs</a>',
+            ]
+        ),
+        crawl4ai_links_payload=None,
+        attachment_extensions=(".pdf",),
+        allowed_domains=["example.com"],
+        include_patterns=[],
+        exclude_patterns=[],
+        return_debug=True,
+    )
+
+    assert internal == ["https://example.com/docs"]
+    assert assets == []
+    assert any(item["reason"] == "ignored-static-asset" for item in debug["dropped_links_with_reason"])

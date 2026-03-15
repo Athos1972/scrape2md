@@ -1,13 +1,15 @@
 from __future__ import annotations
 
 from dataclasses import asdict, dataclass, field
-from datetime import datetime
+from datetime import UTC, datetime
 
 
 @dataclass(slots=True)
 class CrawlConfig:
     start_url: str
     output_root: str = "exports"
+    crawl_profile: str = "conservative"
+    content_extraction: str = "main"
     allowed_domains: list[str] = field(default_factory=list)
     include_patterns: list[str] = field(default_factory=list)
     exclude_patterns: list[str] = field(default_factory=list)
@@ -21,16 +23,16 @@ class CrawlConfig:
     save_markdown: bool = True
     user_agent: str = "scrape2md/0.1.0"
     render_js: bool = True
-    dynamic_mode: bool = True
-    scan_full_page: bool = True
+    dynamic_mode: bool = False
+    scan_full_page: bool = False
     scroll_delay: float = 0.5
     delay_before_return_html: float = 1.0
     remove_consent_popups: bool = True
     remove_overlay_elements: bool = True
-    process_iframes: bool = True
-    flatten_shadow_dom: bool = True
-    enable_menu_clicks: bool = True
-    wait_for: str = "js:document.querySelectorAll('a[href]').length > 0 || document.readyState === 'complete'"
+    process_iframes: bool = False
+    flatten_shadow_dom: bool = False
+    enable_menu_clicks: bool = False
+    wait_for: str = "js:() => document.readyState === 'complete'"
     js_code_before_wait: str | None = None
     js_code: str | None = None
     debug_mode: bool = False
@@ -102,7 +104,7 @@ class Manifest:
 
     @classmethod
     def started(cls, source_url: str, tool_name: str, tool_version: str, config_snapshot: dict) -> "Manifest":
-        now = datetime.utcnow().isoformat() + "Z"
+        now = datetime.now(UTC).isoformat().replace("+00:00", "Z")
         return cls(
             source_url=source_url,
             crawl_started_at=now,
@@ -113,7 +115,7 @@ class Manifest:
         )
 
     def finish(self) -> None:
-        self.crawl_finished_at = datetime.utcnow().isoformat() + "Z"
+        self.crawl_finished_at = datetime.now(UTC).isoformat().replace("+00:00", "Z")
 
     def to_dict(self) -> dict:
         return {

@@ -10,6 +10,7 @@ import httpx
 from markdownify import markdownify as md
 
 from scrape2md.discovery import DiscoveryStats, discover_links
+from scrape2md.utils import extract_content_html
 
 logger = logging.getLogger(__name__)
 
@@ -88,6 +89,7 @@ class CrawlEngine:
         wait_for: str | None,
         js_code_before_wait: str | None,
         js_code: str | None,
+        content_extraction: str,
         headless: bool,
         java_script_enabled: bool,
         crawl4ai_verbose: bool,
@@ -111,9 +113,13 @@ class CrawlEngine:
         self._wait_for = wait_for
         self._js_code_before_wait = js_code_before_wait
         self._js_code = js_code
+        self._content_extraction = content_extraction
         self._headless = headless
         self._java_script_enabled = java_script_enabled
         self._crawl4ai_verbose = crawl4ai_verbose
+        self._http_client = httpx.Client(timeout=self._timeout, follow_redirects=True, headers=self._headers)
+        self._loop: asyncio.AbstractEventLoop | None = None
+        self._crawler: Any | None = None
 
     def fetch_page(
         self,
@@ -164,14 +170,12 @@ class CrawlEngine:
         browser_config = _build_dataclass_from_payload(BrowserConfig, browser_payload)
         run_config = _build_dataclass_from_payload(CrawlerRunConfig, run_payload)
 
-        async def _run() -> Any:
-            async with AsyncWebCrawler(config=browser_config) as crawler:
-                return await crawler.arun(url=url, config=run_config)
-
-        result = asyncio.run(_run())
+        loop = self._ensure_loop()
+        crawler = self._ensure_crawler(loop, AsyncWebCrawler, browser_config)
+        result = loop.run_until_complete(crawler.arun(url=url, config=run_config))
         raw_html = getattr(result, "html", "") or ""
         cleaned_html = getattr(result, "cleaned_html", "") or ""
-        markdown = getattr(result, "markdown", "") or md(raw_html)
+        markdown = self._html_to_markdown(raw_html)
         title = getattr(result, "title", None) or _extract_title(raw_html)
 
         internal_links, asset_links, stats, link_debug = discover_links(
@@ -218,9 +222,8 @@ class CrawlEngine:
         include_patterns: list[str],
         exclude_patterns: list[str],
     ) -> CrawlResult:
-        with httpx.Client(timeout=self._timeout, follow_redirects=True, headers=self._headers) as client:
-            response = client.get(url)
-            response.raise_for_status()
+        response = self._http_client.get(url)
+        response.raise_for_status()
         html = response.text
         title = _extract_title(html)
         internal_links, asset_links, stats, link_debug = discover_links(
@@ -237,7 +240,7 @@ class CrawlEngine:
             url=str(response.url),
             html=html,
             cleaned_html="",
-            markdown=md(html),
+            markdown=self._html_to_markdown(html),
             title=title,
             status_code=response.status_code,
             content_type=response.headers.get("content-type"),
@@ -247,6 +250,32 @@ class CrawlEngine:
             discovery_stats=stats,
             link_debug=link_debug,
         )
+
+    def close(self) -> None:
+        close_http_client = getattr(self._http_client, "close", None)
+        if callable(close_http_client):
+            close_http_client()
+        if self._crawler is not None and self._loop is not None:
+            self._loop.run_until_complete(self._crawler.__aexit__(None, None, None))
+            self._crawler = None
+        if self._loop is not None:
+            self._loop.close()
+            self._loop = None
+
+    def _ensure_loop(self) -> asyncio.AbstractEventLoop:
+        if self._loop is None:
+            self._loop = asyncio.new_event_loop()
+        return self._loop
+
+    def _ensure_crawler(self, loop: asyncio.AbstractEventLoop, crawler_cls: Any, browser_config: Any) -> Any:
+        if self._crawler is None:
+            self._crawler = crawler_cls(config=browser_config)
+            loop.run_until_complete(self._crawler.__aenter__())
+        return self._crawler
+
+    def _html_to_markdown(self, html: str) -> str:
+        extracted_html = extract_content_html(html, self._content_extraction)
+        return md(extracted_html)
 
 
 def _extract_title(html: str) -> str | None:
