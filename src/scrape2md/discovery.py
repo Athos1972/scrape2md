@@ -29,7 +29,14 @@ ASSET_EXTENSIONS = (
 SKIP_ASSET_EXTENSIONS = (
     ".css",
     ".js",
+    ".mjs",
     ".map",
+    ".woff",
+    ".woff2",
+    ".ttf",
+    ".otf",
+    ".eot",
+    ".webmanifest",
 )
 ASSET_HINT_KEYWORDS = (
     "favicon",

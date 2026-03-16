@@ -70,6 +70,10 @@ class SiteExporter:
         queue: deque[tuple[str, int, str | None]] = deque([(normalize_url(self.config.start_url), 0, None)])
         visited: set[str] = set()
         crawled_count = 0
+        skipped_visited = 0
+        skipped_depth = 0
+        skipped_domain = 0
+        skipped_pattern = 0
 
         logger.info(
             "Starting crawl start_url=%s allowed_domains=%s include_patterns=%s exclude_patterns=%s max_depth=%s max_pages=%s dynamic_mode=%s",
@@ -86,6 +90,10 @@ class SiteExporter:
             while queue and len(manifest.pages) < self.config.max_pages:
                 url, depth, discovered_from = queue.popleft()
                 if url in visited or depth > self.config.max_depth:
+                    if url in visited:
+                        skipped_visited += 1
+                    else:
+                        skipped_depth += 1
                     logger.debug(
                         "Skipping url=%s reason=%s",
                         url,
@@ -95,9 +103,11 @@ class SiteExporter:
                 visited.add(url)
 
                 if not is_same_domain(url, self.config.allowed_domains or [domain]):
+                    skipped_domain += 1
                     logger.debug("Skipping url=%s reason=domain_filter", url)
                     continue
                 if not matches_patterns(url, self.config.include_patterns, self.config.exclude_patterns):
+                    skipped_pattern += 1
                     logger.debug("Skipping url=%s reason=pattern_filter", url)
                     continue
 
@@ -211,23 +221,26 @@ class SiteExporter:
                                 manifest.errors.append(error)
 
                     crawled_count += 1
-                    backlog = len(queue)
-                    discovered = len(visited) + len(queue)
+                    queue_size = len(queue)
+                    discovered = len(visited) + queue_size
+                    skipped_total = skipped_visited + skipped_depth + skipped_domain + skipped_pattern
                     if self.config.max_pages > 0:
                         progress = crawled_count / self.config.max_pages * 100
                         logger.info(
-                            "CRAWL_PROGRESS crawled=%d backlog=%d discovered=%d progress=%.0f%%",
+                            "CRAWL_PROGRESS crawled=%d queue_size=%d discovered=%d skipped=%d progress=%.0f%%",
                             crawled_count,
-                            backlog,
+                            queue_size,
                             discovered,
+                            skipped_total,
                             progress,
                         )
                     else:
                         logger.info(
-                            "CRAWL_PROGRESS crawled=%d backlog=%d discovered=%d",
+                            "CRAWL_PROGRESS crawled=%d queue_size=%d discovered=%d skipped=%d",
                             crawled_count,
-                            backlog,
+                            queue_size,
                             discovered,
+                            skipped_total,
                         )
 
                     if self.config.rate_limit_seconds > 0:
@@ -297,5 +310,26 @@ class SiteExporter:
             self.downloader.close()
 
         manifest.finish()
+        remaining_queue = len(queue)
+        skipped_total = skipped_visited + skipped_depth + skipped_domain + skipped_pattern
+        if len(manifest.pages) >= self.config.max_pages:
+            stop_reason = "max_pages_reached"
+        elif remaining_queue == 0:
+            stop_reason = "queue_exhausted"
+        else:
+            stop_reason = "stopped_early"
+        logger.info(
+            "CRAWL_DONE pages=%d assets=%d errors=%d queue_remaining=%d skipped_total=%d skipped_visited=%d skipped_depth=%d skipped_domain=%d skipped_pattern=%d stop_reason=%s",
+            len(manifest.pages),
+            len(manifest.assets),
+            len(manifest.errors),
+            remaining_queue,
+            skipped_total,
+            skipped_visited,
+            skipped_depth,
+            skipped_domain,
+            skipped_pattern,
+            stop_reason,
+        )
         write_manifest(manifest, export_root / "manifest.json")
         return manifest, export_root

@@ -207,3 +207,27 @@ def test_discover_links_ignores_stylesheets() -> None:
     assert internal == ["https://example.com/docs"]
     assert assets == []
     assert any(item["reason"] == "ignored-static-asset" for item in debug["dropped_links_with_reason"])
+
+
+def test_discover_links_ignores_font_assets() -> None:
+    internal, assets, _, debug = discover_links(
+        page_url="https://example.com",
+        html=''.join(
+            [
+                '<a href="/fonts/site.woff2">Font</a>',
+                '<a href="/fonts/site.ttf">Font2</a>',
+                '<a href="/docs">Docs</a>',
+            ]
+        ),
+        crawl4ai_links_payload=None,
+        attachment_extensions=(".pdf",),
+        allowed_domains=["example.com"],
+        include_patterns=[],
+        exclude_patterns=[],
+        return_debug=True,
+    )
+
+    assert internal == ["https://example.com/docs"]
+    assert assets == []
+    ignored = [item for item in debug["dropped_links_with_reason"] if item["reason"] == "ignored-static-asset"]
+    assert len(ignored) == 2

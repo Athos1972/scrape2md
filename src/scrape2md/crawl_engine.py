@@ -4,6 +4,8 @@ import asyncio
 import inspect
 import logging
 from dataclasses import dataclass
+from pathlib import Path
+import tempfile
 from typing import Any
 
 import httpx
@@ -120,6 +122,8 @@ class CrawlEngine:
         self._http_client = httpx.Client(timeout=self._timeout, follow_redirects=True, headers=self._headers)
         self._loop: asyncio.AbstractEventLoop | None = None
         self._crawler: Any | None = None
+        self._crawl4ai_base_directory = str(Path(tempfile.gettempdir()) / "scrape2md-crawl4ai")
+        Path(self._crawl4ai_base_directory).mkdir(parents=True, exist_ok=True)
 
     def fetch_page(
         self,
@@ -269,7 +273,10 @@ class CrawlEngine:
 
     def _ensure_crawler(self, loop: asyncio.AbstractEventLoop, crawler_cls: Any, browser_config: Any) -> Any:
         if self._crawler is None:
-            self._crawler = crawler_cls(config=browser_config)
+            self._crawler = crawler_cls(
+                config=browser_config,
+                base_directory=self._crawl4ai_base_directory,
+            )
             loop.run_until_complete(self._crawler.__aenter__())
         return self._crawler
 
