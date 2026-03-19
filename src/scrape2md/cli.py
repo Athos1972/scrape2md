@@ -4,10 +4,11 @@ from pathlib import Path
 
 import typer
 
-from scrape2md.config import load_config, merge_config
+from scrape2md.config import load_config, merge_config, load_edge_config
 from scrape2md.exporter import SiteExporter
+from scrape2md.edge_scraper import EdgeHistoryScraper
 from scrape2md.logging_utils import setup_logging
-from scrape2md.models import CrawlConfig
+from scrape2md.models import CrawlConfig, EdgeConfig
 
 app = typer.Typer(help="Crawl external websites into deterministic HTML/Markdown/asset exports.")
 
@@ -38,6 +39,22 @@ def main(
 ) -> None:
     if ctx.invoked_subcommand is None:
         _execute(config, start_url)
+
+
+@app.command()
+def edge(
+    config: Path | None = typer.Option(None, "--config", help="Path to TOML config"),
+) -> None:
+    """Read Edge history and scrape recent URLs."""
+    setup_logging()
+    if not config:
+        # Provide a default EdgeConfig if no config file is provided
+        edge_config = EdgeConfig()
+    else:
+        edge_config = load_edge_config(config)
+    
+    EdgeHistoryScraper(edge_config).run()
+    typer.echo("Edge history scraping done.")
 
 
 @app.command()

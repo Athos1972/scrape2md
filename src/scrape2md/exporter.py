@@ -5,17 +5,51 @@ import logging
 import time
 from collections import deque
 from pathlib import Path
+from typing import Any
 
 from scrape2md import __version__
 from scrape2md.attachments import AttachmentDownloader
 from scrape2md.crawl_engine import CrawlEngine
 from scrape2md.discovery import discover_urls_from_sitemaps
-from scrape2md.manifest import write_manifest
+from scrape2md.manifest import read_manifest, write_manifest
 from scrape2md.models import CrawlConfig, ErrorRecord, Manifest, PageRecord
+from scrape2md.page_metadata import extract_page_metadata
 from scrape2md.url_mapper import normalize_url, url_to_rel_path
 from scrape2md.utils import is_binary_content_type, is_same_domain, looks_like_html_document, matches_patterns, sha256_text
 
 logger = logging.getLogger(__name__)
+
+_FRONTMATTER_PRIORITY_FIELDS = [
+    "title",
+    "url",
+    "canonical_url",
+    "page_id",
+    "created_at",
+    "published_at",
+    "updated_at",
+    "last_modified",
+    "authors",
+    "language",
+    "content_type",
+    "page_type",
+    "site_name",
+    "version",
+    "visibility",
+    "tags",
+    "aliases",
+    "entities",
+    "labels",
+    "breadcrumbs",
+    "section_path",
+    "etag",
+    "last_modified_header",
+    "status_code",
+    "content_length",
+]
+
+
+def _is_error_status(status_code: int | None) -> bool:
+    return status_code is not None and status_code >= 400
 
 
 class SiteExporter:
@@ -59,6 +93,11 @@ class SiteExporter:
             path.mkdir(parents=True, exist_ok=True)
         if self.config.debug_mode:
             debug_dir.mkdir(parents=True, exist_ok=True)
+        previous_manifest = read_manifest(export_root / "manifest.json")
+        previous_pages_by_url = {
+            page.normalized_url: page
+            for page in (previous_manifest.pages if previous_manifest else [])
+        }
 
         manifest = Manifest.started(
             source_url=self.config.start_url,
@@ -125,16 +164,38 @@ class SiteExporter:
                     md_path = pages_dir / md_rel
                     html_path.parent.mkdir(parents=True, exist_ok=True)
                     md_path.parent.mkdir(parents=True, exist_ok=True)
+                    previous_page = previous_pages_by_url.get(normalized_url)
+                    content_hash = sha256_text(result.html)
+                    is_unchanged = previous_page is not None and previous_page.content_hash == content_hash
+                    metadata_result = extract_page_metadata(
+                        html=result.html,
+                        url=result.url,
+                        title=result.title,
+                        content_type=result.content_type,
+                        status_code=result.status_code,
+                        response_headers=result.response_headers,
+                    )
+                    is_error_page = _is_error_status(result.status_code)
 
                     content_type = result.content_type or ""
                     is_html_resource = looks_like_html_document(content_type, normalized_url, result.html)
                     markdown_content = (result.markdown or "").strip()
-                    should_write_markdown = self.config.save_markdown and is_html_resource and bool(markdown_content)
+                    should_write_markdown = (
+                        self.config.save_markdown
+                        and not is_error_page
+                        and is_html_resource
+                        and bool(markdown_content)
+                    )
                     markdown_skip_reason: str | None = None
-                    if self.config.save_html:
+                    if is_error_page:
+                        markdown_skip_reason = f"skip_markdown_error_status_{result.status_code}"
+                        logger.info("%s url=%s", markdown_skip_reason, normalized_url)
+                    if self.config.save_html and not is_error_page and (not is_unchanged or not html_path.exists()):
                         html_path.write_text(result.html, encoding="utf-8")
                     if self.config.save_markdown:
-                        if not is_html_resource:
+                        if is_error_page:
+                            pass
+                        elif not is_html_resource:
                             markdown_skip_reason = "skip_markdown_non_html"
                             logger.info("%s url=%s content_type=%s", markdown_skip_reason, normalized_url, content_type or "-")
                             if is_binary_content_type(content_type):
@@ -143,7 +204,12 @@ class SiteExporter:
                             markdown_skip_reason = "skip_markdown_empty_content"
                             logger.info("%s url=%s", markdown_skip_reason, normalized_url)
                         else:
-                            md_path.write_text(result.markdown, encoding="utf-8")
+                            if not is_unchanged or not md_path.exists():
+                                markdown_with_frontmatter = _render_markdown_document(
+                                    metadata_result.metadata,
+                                    result.markdown,
+                                )
+                                md_path.write_text(markdown_with_frontmatter, encoding="utf-8")
 
                     screenshot_path: str | None = None
                     if self.config.debug_mode:
@@ -159,11 +225,21 @@ class SiteExporter:
                     if self.config.debug_save_screenshot:
                         logger.debug("debug_save_screenshot enabled, but screenshot capture is not supported in this runtime.")
 
+                    if is_error_page:
+                        manifest.errors.append(
+                            ErrorRecord(
+                                url=result.url,
+                                stage="page_response",
+                                error_type="HttpStatusError",
+                                message=f"HTTP status {result.status_code}",
+                            )
+                        )
+
                     manifest.pages.append(
                         PageRecord(
                             url=result.url,
                             normalized_url=normalized_url,
-                            local_html_path=str(html_path) if self.config.save_html else None,
+                            local_html_path=str(html_path) if self.config.save_html and not is_error_page else None,
                             local_markdown_path=str(md_path) if should_write_markdown else None,
                             title=result.title,
                             status_code=result.status_code,
@@ -172,7 +248,7 @@ class SiteExporter:
                             discovered_from=discovered_from,
                             internal_links=result.internal_links,
                             asset_links=result.asset_links,
-                            content_hash=sha256_text(result.html),
+                            content_hash=content_hash,
                             fetch_mode=result.fetch_mode,
                             links_from_result=result.discovery_stats.crawl4ai_link_count,
                             links_from_html_fallback=result.discovery_stats.html_href_count,
@@ -180,16 +256,19 @@ class SiteExporter:
                             filtered_assets_count=result.discovery_stats.filtered_asset_count,
                             html_length=len(result.html),
                             screenshot_path=screenshot_path,
-                            success=True,
+                            success=not is_error_page,
+                            change_status="unchanged" if is_unchanged else ("updated" if previous_page else "new"),
+                            page_metadata=metadata_result.metadata,
+                            page_metadata_raw=metadata_result.raw,
                         )
                     )
 
-                    for link in result.internal_links if is_html_resource else []:
+                    for link in result.internal_links if is_html_resource and not is_error_page else []:
                         n_link = normalize_url(link)
                         if n_link not in visited:
                             queue.append((n_link, depth + 1, normalized_url))
 
-                    if depth == 0 and is_html_resource and not result.internal_links:
+                    if depth == 0 and is_html_resource and not is_error_page and not result.internal_links:
                         pages, sitemap_assets = discover_urls_from_sitemaps(
                             page_url=normalized_url,
                             request_timeout=self.config.request_timeout,
@@ -247,9 +326,10 @@ class SiteExporter:
                         time.sleep(self.config.rate_limit_seconds)
 
                     logger.info(
-                        "Crawled page %s mode=%s title=%s raw_html_len=%s cleaned_html_len=%s result.links internal count=%s html fallback href count=%s after filtering count=%s assets=%s html_path=%s",
+                        "Crawled page %s mode=%s change_status=%s title=%s raw_html_len=%s cleaned_html_len=%s result.links internal count=%s html fallback href count=%s after filtering count=%s assets=%s html_path=%s",
                         normalized_url,
                         result.fetch_mode,
+                        manifest.pages[-1].change_status,
                         result.title,
                         len(result.html),
                         len(result.cleaned_html or ""),
@@ -333,3 +413,76 @@ class SiteExporter:
         )
         write_manifest(manifest, export_root / "manifest.json")
         return manifest, export_root
+
+
+def _render_markdown_document(metadata: dict[str, Any], markdown_body: str) -> str:
+    body = markdown_body.strip()
+    frontmatter = _render_yaml_frontmatter(metadata)
+    if frontmatter:
+        return f"{frontmatter}\n\n{body}\n"
+    return f"{body}\n"
+
+
+def _render_yaml_frontmatter(metadata: dict[str, Any]) -> str:
+    if not metadata:
+        return ""
+    ordered_keys = [
+        key for key in _FRONTMATTER_PRIORITY_FIELDS if key in metadata
+    ] + sorted(key for key in metadata if key not in _FRONTMATTER_PRIORITY_FIELDS)
+    lines = ["---"]
+    for key in ordered_keys:
+        value = metadata[key]
+        rendered = _render_yaml_value(value, indent=0)
+        if rendered is None:
+            continue
+        if "\n" in rendered:
+            lines.append(f"{key}:")
+            for line in rendered.splitlines():
+                lines.append(f"  {line}")
+        else:
+            lines.append(f"{key}: {rendered}")
+    lines.append("---")
+    return "\n".join(lines)
+
+
+def _render_yaml_value(value: Any, *, indent: int) -> str | None:
+    if value is None:
+        return None
+    if isinstance(value, bool):
+        return "true" if value else "false"
+    if isinstance(value, (int, float)):
+        return str(value)
+    if isinstance(value, str):
+        return json.dumps(value, ensure_ascii=False)
+    if isinstance(value, list):
+        if not value:
+            return "[]"
+        lines: list[str] = []
+        child_prefix = "  " * indent
+        for item in value:
+            rendered_item = _render_yaml_value(item, indent=indent + 1)
+            if rendered_item is None:
+                continue
+            if "\n" in rendered_item:
+                parts = rendered_item.splitlines()
+                lines.append(f"{child_prefix}- {parts[0]}")
+                lines.extend(f"{child_prefix}  {part}" for part in parts[1:])
+            else:
+                lines.append(f"{child_prefix}- {rendered_item}")
+        return "\n".join(lines)
+    if isinstance(value, dict):
+        if not value:
+            return "{}"
+        lines: list[str] = []
+        child_prefix = "  " * indent
+        for key in sorted(value):
+            rendered_item = _render_yaml_value(value[key], indent=indent + 1)
+            if rendered_item is None:
+                continue
+            if "\n" in rendered_item:
+                lines.append(f"{child_prefix}{key}:")
+                lines.extend(f"{child_prefix}  {part}" for part in rendered_item.splitlines())
+            else:
+                lines.append(f"{child_prefix}{key}: {rendered_item}")
+        return "\n".join(lines)
+    return json.dumps(str(value), ensure_ascii=False)

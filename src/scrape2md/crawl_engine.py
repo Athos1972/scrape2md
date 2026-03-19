@@ -3,7 +3,7 @@ from __future__ import annotations
 import asyncio
 import inspect
 import logging
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 import tempfile
 from typing import Any
@@ -65,6 +65,7 @@ class CrawlResult:
     fetch_mode: str
     discovery_stats: DiscoveryStats
     link_debug: dict[str, Any] | None = None
+    response_headers: dict[str, str] = field(default_factory=dict)
 
 
 class CrawlEngine:
@@ -194,7 +195,8 @@ class CrawlEngine:
         )
 
         status = getattr(result, "status_code", None)
-        ctype = getattr(result, "response_headers", {}).get("content-type") if getattr(result, "response_headers", None) else None
+        response_headers = _stringify_headers(getattr(result, "response_headers", None))
+        ctype = response_headers.get("content-type")
         return CrawlResult(
             url=getattr(result, "url", url) or url,
             html=raw_html,
@@ -208,6 +210,7 @@ class CrawlEngine:
             fetch_mode="crawl4ai",
             discovery_stats=stats,
             link_debug=link_debug,
+            response_headers=response_headers,
         )
 
     def _build_js_code_before_wait(self) -> str | None:
@@ -253,6 +256,7 @@ class CrawlEngine:
             fetch_mode="httpx",
             discovery_stats=stats,
             link_debug=link_debug,
+            response_headers=_stringify_headers(response.headers),
         )
 
     def close(self) -> None:
@@ -365,3 +369,17 @@ def _build_dataclass_from_payload(cls: Any, payload: dict[str, Any]) -> Any:
     if unknown:
         logger.debug("Ignoring unsupported %s fields: %s", cls.__name__, ", ".join(sorted(unknown)))
     return cls(**filtered)
+
+
+def _stringify_headers(headers: Any) -> dict[str, str]:
+    if not headers:
+        return {}
+    try:
+        items = headers.items()
+    except AttributeError:
+        return {}
+    return {
+        str(key).lower(): str(value)
+        for key, value in items
+        if key is not None and value is not None
+    }

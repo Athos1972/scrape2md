@@ -9,6 +9,8 @@
 - Seiten als Markdown exportieren
 - referenzierte Binärdateien (Attachments) herunterladen
 - `manifest.json` mit Seiten/Assets/Fehlern schreiben
+- pro Seite strukturierte `page_metadata` im Manifest bereitstellen, damit nachgelagerte Importer Frontmatter direkt mappen koennen
+- inkrementelle Seitenerkennung ueber `content_hash`, damit unveraenderte Seiten in nachgelagerten Pipelines nicht erneut verarbeitet werden muessen
 - robustes Logging und Fehlerisolierung (eine defekte Seite stoppt nicht den ganzen Lauf)
 
 ## Installation
@@ -179,11 +181,34 @@ exports/docs.example.com/
   manifest.json
 ```
 
+Jeder `pages[]`-Eintrag im `manifest.json` kann zusaetzlich einen `page_metadata`-Block mit quellennahen Seitendaten enthalten, z. B. `title`, `canonical_url`, `page_id`, `published_at`, `updated_at`, `authors`, `breadcrumbs`, `section_path`, `page_type`, `etag`, `last_modified_header` oder `content_length`. Wenn verfuegbar, werden normalisierte Werte ausgegeben; optionale Rohwerte liegen separat unter `page_metadata_raw`.
+
 Optional bei `save_html = true`:
 
 ```text
 exports/docs.example.com/html/getting-started.html
 ```
+
+## Inkrementeller Lauf / Delta-Verhalten
+
+`scrape2md` laedt beim Start, falls vorhanden, das letzte `manifest.json` unterhalb des Export-Ziels und vergleicht die neu geholten Seiten ueber `normalized_url` und `content_hash`.
+
+Aktuelles Verhalten:
+
+- Seiten werden weiterhin normal gefetcht
+- bei identischem `content_hash` wird die Seite im neuen Manifest als `change_status = "unchanged"` markiert
+- fuer `unchanged` werden bestehende HTML-/Markdown-Dateien nicht neu geschrieben
+- dadurch koennen nachgelagerte Schritte wie Beschlagwortung, Chunking oder Indexierung gezielt nur auf Seiten mit `change_status = "new"` oder `change_status = "updated"` reagieren
+
+Die drei moeglichen Werte fuer Seiten sind:
+
+- `new`: URL war im vorherigen Manifest noch nicht vorhanden
+- `updated`: URL war bekannt, aber der HTML-Inhalt hat sich geaendert
+- `unchanged`: URL war bekannt und der HTML-Inhalt ist unveraendert
+
+Zukuenftige Erweiterung:
+
+- echtes Fetch-Skipping ueber HTTP-Validatoren wie `ETag` und `Last-Modified`, damit auch das Netz-/Rendern reduziert wird. Das ist bewusst noch nicht aktiv; aktuell wird nur die nachgelagerte Verarbeitung minimiert.
 
 ## Architekturhinweis
 

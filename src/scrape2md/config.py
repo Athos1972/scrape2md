@@ -4,7 +4,7 @@ from dataclasses import fields
 import tomllib
 from pathlib import Path
 
-from scrape2md.models import CrawlConfig
+from scrape2md.models import CrawlConfig, EdgeConfig
 
 
 DEFAULT_CRAWL_PROFILE = "conservative"
@@ -78,6 +78,14 @@ def load_config(path: str | Path) -> CrawlConfig:
     allowed_keys = {f.name for f in fields(CrawlConfig)}
     filtered = {key: value for key, value in data.items() if key in allowed_keys}
     return CrawlConfig(**filtered)
+
+
+def load_edge_config(path: str | Path) -> EdgeConfig:
+    data = tomllib.loads(Path(path).read_text(encoding="utf-8"))
+    edge_data = data.get("edge", data)
+    allowed_keys = {f.name for f in fields(EdgeConfig)}
+    filtered = {key: value for key, value in edge_data.items() if key in allowed_keys}
+    return EdgeConfig(**filtered)
 
 
 def merge_config(base: CrawlConfig, **overrides: object) -> CrawlConfig:

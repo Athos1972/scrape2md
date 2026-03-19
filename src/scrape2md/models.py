@@ -2,6 +2,10 @@ from __future__ import annotations
 
 from dataclasses import asdict, dataclass, field
 from datetime import UTC, datetime
+from typing import Literal
+
+
+ChangeStatus = Literal["new", "updated", "unchanged"]
 
 
 @dataclass(slots=True)
@@ -49,6 +53,15 @@ class CrawlConfig:
 
 
 @dataclass(slots=True)
+class EdgeConfig:
+    history_db_path: str | None = None
+    output_root: str = "exports/edge"
+    exclude_patterns: list[str] = field(default_factory=lambda: ["confluence", "jira", "localhost"])
+    max_days_back: int = 7
+    crawl_profile: str = "conservative"
+
+
+@dataclass(slots=True)
 class PageRecord:
     url: str
     normalized_url: str
@@ -70,6 +83,9 @@ class PageRecord:
     html_length: int = 0
     screenshot_path: str | None = None
     success: bool = True
+    change_status: ChangeStatus = "new"
+    page_metadata: dict = field(default_factory=dict)
+    page_metadata_raw: dict = field(default_factory=dict)
 
 
 @dataclass(slots=True)
@@ -129,3 +145,17 @@ class Manifest:
             "assets": [asdict(a) for a in self.assets],
             "errors": [asdict(e) for e in self.errors],
         }
+
+    @classmethod
+    def from_dict(cls, data: dict) -> "Manifest":
+        return cls(
+            source_url=data["source_url"],
+            crawl_started_at=data["crawl_started_at"],
+            crawl_finished_at=data["crawl_finished_at"],
+            tool_name=data["tool_name"],
+            tool_version=data["tool_version"],
+            config_snapshot=data.get("config_snapshot", {}),
+            pages=[PageRecord(**page) for page in data.get("pages", [])],
+            assets=[AssetRecord(**asset) for asset in data.get("assets", [])],
+            errors=[ErrorRecord(**error) for error in data.get("errors", [])],
+        )
